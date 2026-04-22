@@ -1,0 +1,29 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+# ═══ 보안 - 민감 정보 ═══
+# API 키, 토큰 등
+secrets.properties
+*.keystore
+*.jks
+google-services.json
+release-keys/
+
+# 환경 변수
+.env
+.env.local
+
+# macOS
+.DS_Store
