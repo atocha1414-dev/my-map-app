@@ -81,4 +81,11 @@ dependencies {
 
     implementation("org.maplibre.gl:android-sdk:11.5.0")
     implementation("androidx.navigation:navigation-compose:2.8.5")
+
+
+    implementation("androidx.compose.material:material-icons-extended:1.7.6")
+
+
+
+
 }
