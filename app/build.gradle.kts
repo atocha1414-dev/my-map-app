@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.mymap"
+    namespace = "com.connor.mymap"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.mymap"
+        applicationId = "com.connor.mymap"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
@@ -72,20 +72,12 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
 
-    // Permission — 권한 처리 편의
-    implementation("com.google.accompanist:accompanist-permissions:0.34.0")
-
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
-
-    implementation("org.maplibre.gl:android-sdk:11.5.0")
     implementation("androidx.navigation:navigation-compose:2.8.5")
 
-
+    // DataStore — 최초 실행 약관 동의 여부 저장
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.compose.material:material-icons-extended:1.7.6")
-
-
-
-
 }
