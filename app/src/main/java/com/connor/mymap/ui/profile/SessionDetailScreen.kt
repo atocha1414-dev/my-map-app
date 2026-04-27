@@ -46,9 +46,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.ui.map.MapLibreView
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -72,8 +69,6 @@ fun SessionDetailScreen(
     // ViewModel 재생 루프가 50ms마다 직접 갱신하는 표시 전용 값
     val displayElapsedMs by viewModel.displayElapsedMs.collectAsStateWithLifecycle()
     val displayProgress by viewModel.displayProgress.collectAsStateWithLifecycle()
-
-    val startTimestampMs by viewModel.startTimestampMs.collectAsStateWithLifecycle()
 
     val mapFilePath = viewModel.mapFilePath
 
@@ -148,12 +143,12 @@ fun SessionDetailScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = formatActualTime(startTimestampMs + displayElapsedMs),
+                        text = formatDuration(displayElapsedMs),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Spacer(Modifier.weight(1f))
                     Text(
-                        text = formatActualTime(startTimestampMs + totalMs),
+                        text = formatDuration(totalMs),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -284,8 +279,13 @@ private fun PlaybackPathCanvas(
     }
 }
 
-private fun formatActualTime(timestampMs: Long): String =
-    SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestampMs))
+private fun formatDuration(millis: Long): String {
+    val s = millis / 1_000L
+    val h = s / 3_600L
+    val m = (s % 3_600L) / 60L
+    val sec = s % 60L
+    return if (h > 0L) "%d:%02d:%02d".format(h, m, sec) else "%02d:%02d".format(m, sec)
+}
 
 private fun formatSpeed(multiplier: Float): String = when (multiplier) {
     1f -> "1x"
