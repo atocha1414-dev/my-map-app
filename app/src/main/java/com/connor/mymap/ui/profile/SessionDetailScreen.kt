@@ -30,6 +30,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -62,15 +63,18 @@ fun SessionDetailScreen(
     val isPlaying by viewModel.isPlaying.collectAsStateWithLifecycle()
     val visiblePoints by viewModel.visiblePoints.collectAsStateWithLifecycle()
     val allPoints by viewModel.allPoints.collectAsStateWithLifecycle()
-    val progress by viewModel.progress.collectAsStateWithLifecycle()
-    val elapsedMs by viewModel.elapsedMs.collectAsStateWithLifecycle()
     val totalMs by viewModel.totalMs.collectAsStateWithLifecycle()
     val speedMultiplier by viewModel.speedMultiplier.collectAsStateWithLifecycle()
     val routeBounds by viewModel.routeBounds.collectAsStateWithLifecycle()
+    // ViewModel 재생 루프가 50ms마다 직접 갱신하는 표시 전용 값
+    val displayElapsedMs by viewModel.displayElapsedMs.collectAsStateWithLifecycle()
+    val displayProgress by viewModel.displayProgress.collectAsStateWithLifecycle()
 
     val mapFilePath = viewModel.mapFilePath
 
     var isDragging by remember { mutableStateOf(false) }
+    // 드래그 중 슬라이더 위치를 즉각 반영하기 위한 로컬 값
+    var localDragProgress by remember { mutableFloatStateOf(0f) }
     var wasPlayingBeforeDrag by remember { mutableStateOf(false) }
 
     // 화면을 벗어날 때 재생을 멈춘다.
@@ -139,7 +143,7 @@ fun SessionDetailScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = formatPlaybackDuration(elapsedMs),
+                        text = formatPlaybackDuration(displayElapsedMs),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Spacer(Modifier.weight(1f))
@@ -151,13 +155,15 @@ fun SessionDetailScreen(
                 }
 
                 Slider(
-                    value = progress,
+                    // 드래그 중: 즉각 반영되는 로컬값 / 재생·정지 중: ViewModel이 50ms마다 갱신하는 값
+                    value = if (isDragging) localDragProgress else displayProgress,
                     onValueChange = { fraction ->
                         if (!isDragging) {
                             isDragging = true
                             wasPlayingBeforeDrag = isPlaying
                             viewModel.pause()
                         }
+                        localDragProgress = fraction
                         viewModel.seekTo(fraction)
                     },
                     onValueChangeFinished = {

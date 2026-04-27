@@ -43,29 +43,24 @@ class PlaybackViewModel(
     private val _isLoading = MutableStateFlow(true)
     private val _routeBounds = MutableStateFlow<LatLngBounds?>(null)
 
+    // UI 표시 전용: 재생 루프 내부에서 50ms마다 직접 갱신.
+    // elapsedMs/progress(이산)와 분리해 점프 없이 부드럽게 올라간다.
+    private val _displayElapsedMs = MutableStateFlow(0L)
+    private val _displayProgress = MutableStateFlow(0f)
+
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
     val speedMultiplier: StateFlow<Float> = _speedMultiplier.asStateFlow()
     val routeBounds: StateFlow<LatLngBounds?> = _routeBounds.asStateFlow()
     val allPoints: StateFlow<List<TrackingPoint>> = _allPoints.asStateFlow()
+    val displayElapsedMs: StateFlow<Long> = _displayElapsedMs.asStateFlow()
+    val displayProgress: StateFlow<Float> = _displayProgress.asStateFlow()
 
     val visiblePoints: StateFlow<List<TrackingPoint>> =
         combine(_allPoints, _currentIndex) { points, index ->
             if (points.isEmpty()) emptyList()
             else points.subList(0, index + 1)
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-
-    val progress: StateFlow<Float> =
-        combine(_allPoints, _currentIndex) { points, index ->
-            if (points.size <= 1) 0f
-            else index.toFloat() / (points.size - 1).toFloat()
-        }.stateIn(viewModelScope, SharingStarted.Eagerly, 0f)
-
-    val elapsedMs: StateFlow<Long> =
-        combine(_allPoints, _currentIndex) { points, index ->
-            if (points.isEmpty()) 0L
-            else points[index].timestampMillis - points[0].timestampMillis
-        }.stateIn(viewModelScope, SharingStarted.Eagerly, 0L)
 
     val totalMs: StateFlow<Long> = _allPoints
         .map { points ->
@@ -101,21 +96,48 @@ class PlaybackViewModel(
         if (points.isEmpty()) return
         if (_currentIndex.value >= points.lastIndex) {
             _currentIndex.value = 0
+            _displayElapsedMs.value = 0L
+            _displayProgress.value = 0f
         }
         _isPlaying.value = true
+
         playbackJob = viewModelScope.launch {
             while (_isPlaying.value && _currentIndex.value < _allPoints.value.lastIndex) {
                 val pts = _allPoints.value
                 val idx = _currentIndex.value
-                val gapMs = if (idx < pts.lastIndex) {
-                    pts[idx + 1].timestampMillis - pts[idx].timestampMillis
-                } else 0L
-                val delayMs = (gapMs / _speedMultiplier.value)
-                    .toLong()
+                val totalDuration = (pts.last().timestampMillis - pts.first().timestampMillis)
+                    .coerceAtLeast(1L)
+
+                val baseElapsed = pts[idx].timestampMillis - pts[0].timestampMillis
+                val targetElapsed = pts[idx + 1].timestampMillis - pts[0].timestampMillis
+                val gapElapsed = (targetElapsed - baseElapsed).coerceAtLeast(1L)
+                val speed = _speedMultiplier.value
+
+                // 실제 대기 시간: GPS 간격 ÷ 배속, MIN~MAX로 클램프
+                val realDelayMs = (gapElapsed / speed).toLong()
                     .coerceIn(MIN_DELAY_MS, MAX_DELAY_MS)
-                delay(delayMs)
-                // 딜레이 중 사용자가 seekTo로 이동했으면 덮어쓰지 않는다.
+
+                // 일시정지 후 재개 시: 이미 표시된 만큼 startWall을 과거로 당겨
+                // → display가 baseElapsed로 튀지 않고 현재 위치에서 이어간다
+                val alreadyInGap = (_displayElapsedMs.value - baseElapsed).coerceIn(0L, gapElapsed)
+                val alreadyRealMs = (alreadyInGap / speed).toLong().coerceIn(0L, realDelayMs)
+                val startWall = System.currentTimeMillis() - alreadyRealMs
+
+                // 50ms 단위로 display를 선형 보간하며 실제 대기
+                while (_isPlaying.value) {
+                    val wallDelta = (System.currentTimeMillis() - startWall).coerceAtLeast(0L)
+                    if (wallDelta >= realDelayMs) break
+                    val fraction = wallDelta.toFloat() / realDelayMs.toFloat()
+                    val interp = baseElapsed + (gapElapsed * fraction).toLong()
+                    _displayElapsedMs.value = interp
+                    _displayProgress.value = interp.toFloat() / totalDuration.toFloat()
+                    delay(DISPLAY_STEP_MS)
+                }
+
+                // 포인트 도달: display를 정확히 targetElapsed로 맞추고 index 전진
                 if (_isPlaying.value && _currentIndex.value == idx) {
+                    _displayElapsedMs.value = targetElapsed
+                    _displayProgress.value = targetElapsed.toFloat() / totalDuration.toFloat()
                     _currentIndex.value = idx + 1
                 }
             }
@@ -131,12 +153,20 @@ class PlaybackViewModel(
     fun reset() {
         pause()
         _currentIndex.value = 0
+        _displayElapsedMs.value = 0L
+        _displayProgress.value = 0f
     }
 
     fun seekTo(fraction: Float) {
         val points = _allPoints.value
         if (points.isEmpty()) return
-        _currentIndex.value = (fraction * points.lastIndex).toInt().coerceIn(0, points.lastIndex)
+        val newIndex = (fraction * points.lastIndex).toInt().coerceIn(0, points.lastIndex)
+        val totalDuration = (points.last().timestampMillis - points.first().timestampMillis)
+            .coerceAtLeast(1L)
+        val elapsed = points[newIndex].timestampMillis - points[0].timestampMillis
+        _currentIndex.value = newIndex
+        _displayElapsedMs.value = elapsed
+        _displayProgress.value = elapsed.toFloat() / totalDuration.toFloat()
     }
 
     fun cycleSpeed() {
@@ -171,7 +201,8 @@ class PlaybackViewModel(
     companion object {
         private const val TAG = "PlaybackViewModel"
         private const val MIN_DELAY_MS = 16L
-        private const val MAX_DELAY_MS = 5_000L
+        private const val MAX_DELAY_MS = 10_000L
+        private const val DISPLAY_STEP_MS = 50L
 
         fun factory(sessionId: String) = viewModelFactory {
             initializer {
