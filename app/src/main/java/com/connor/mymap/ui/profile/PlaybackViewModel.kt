@@ -74,6 +74,8 @@ class PlaybackViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0L)
 
     private var playbackJob: Job? = null
+    // 레이스 컨디션 방지: pause 후 즉시 play 시 이전 코루틴이 _isPlaying=false를 덮어쓰지 않도록
+    private var playbackGeneration = 0
 
     init {
         viewModelScope.launch { loadPoints() }
@@ -104,52 +106,48 @@ class PlaybackViewModel(
             _displayProgress.value = 0f
         }
         _isPlaying.value = true
+        val gen = ++playbackGeneration
 
         playbackJob = viewModelScope.launch {
             while (_isPlaying.value && _currentIndex.value < _allPoints.value.lastIndex) {
                 val pts = _allPoints.value
                 val idx = _currentIndex.value
-                val totalDuration = (pts.last().timestampMillis - pts.first().timestampMillis)
-                    .coerceAtLeast(1L)
+                val lastIdx = pts.lastIndex.toFloat()
 
                 val baseElapsed = pts[idx].timestampMillis - pts[0].timestampMillis
                 val targetElapsed = pts[idx + 1].timestampMillis - pts[0].timestampMillis
                 val gapElapsed = (targetElapsed - baseElapsed).coerceAtLeast(1L)
                 val speed = _speedMultiplier.value
 
-                // 실제 대기 시간: GPS 간격 ÷ 배속 (배속 배율로만 조절)
-                val realDelayMs = (gapElapsed / speed).toLong()
-                    .coerceAtLeast(MIN_DELAY_MS)
+                val realDelayMs = (gapElapsed / speed).toLong().coerceAtLeast(MIN_DELAY_MS)
 
-                // 일시정지 후 재개 시: 이미 표시된 만큼 startWall을 과거로 당겨
-                // → display가 baseElapsed로 튀지 않고 현재 위치에서 이어간다
                 val alreadyInGap = (_displayElapsedMs.value - baseElapsed).coerceIn(0L, gapElapsed)
                 val alreadyRealMs = (alreadyInGap / speed).toLong().coerceIn(0L, realDelayMs)
                 val startWall = System.currentTimeMillis() - alreadyRealMs
 
-                // 50ms 단위로 display를 선형 보간하며 실제 대기
                 while (_isPlaying.value) {
                     val wallDelta = (System.currentTimeMillis() - startWall).coerceAtLeast(0L)
                     if (wallDelta >= realDelayMs) break
                     val fraction = wallDelta.toFloat() / realDelayMs.toFloat()
-                    val interp = baseElapsed + (gapElapsed * fraction).toLong()
-                    _displayElapsedMs.value = interp
-                    _displayProgress.value = interp.toFloat() / totalDuration.toFloat()
+                    _displayElapsedMs.value = baseElapsed + (gapElapsed * fraction).toLong()
+                    // 슬라이더와 단위 일치: 인덱스 기반 비율로 표시
+                    _displayProgress.value = (idx + fraction) / lastIdx
                     delay(DISPLAY_STEP_MS)
                 }
 
-                // 포인트 도달: display를 정확히 targetElapsed로 맞추고 index 전진
                 if (_isPlaying.value && _currentIndex.value == idx) {
                     _displayElapsedMs.value = targetElapsed
-                    _displayProgress.value = targetElapsed.toFloat() / totalDuration.toFloat()
+                    _displayProgress.value = (idx + 1) / lastIdx
                     _currentIndex.value = idx + 1
                 }
             }
-            _isPlaying.value = false
+            // 이 코루틴이 현재 유효한 재생인 경우에만 상태 변경
+            if (gen == playbackGeneration) _isPlaying.value = false
         }
     }
 
     fun pause() {
+        playbackGeneration++
         _isPlaying.value = false
         playbackJob?.cancel()
     }
@@ -165,12 +163,11 @@ class PlaybackViewModel(
         val points = _allPoints.value
         if (points.isEmpty()) return
         val newIndex = (fraction * points.lastIndex).toInt().coerceIn(0, points.lastIndex)
-        val totalDuration = (points.last().timestampMillis - points.first().timestampMillis)
-            .coerceAtLeast(1L)
         val elapsed = points[newIndex].timestampMillis - points[0].timestampMillis
         _currentIndex.value = newIndex
         _displayElapsedMs.value = elapsed
-        _displayProgress.value = elapsed.toFloat() / totalDuration.toFloat()
+        // fraction을 그대로 사용해 슬라이더 위치와 일치시킴
+        _displayProgress.value = fraction
     }
 
     fun cycleSpeed() {
