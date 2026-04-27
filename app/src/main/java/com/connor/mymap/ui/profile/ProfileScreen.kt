@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -109,6 +110,7 @@ private fun SessionListContent(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .statusBarsPadding()   // 카메라·상태바 아래부터 콘텐츠 시작
             .padding(horizontal = 16.dp, vertical = 16.dp)
     ) {
         Text(

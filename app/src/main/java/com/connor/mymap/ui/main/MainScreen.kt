@@ -46,7 +46,12 @@ fun MainScreen() {
             }
         }
     ) { padding ->
-        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+        // 상단 padding은 적용하지 않는다 — 지도(MapScreen)가 상태바·카메라 노치까지 가득 채워야 한다.
+        // 하단 padding만 적용해 탭바와 시스템 네비게이션 바 위까지만 콘텐츠가 올라오게 한다.
+        Box(modifier = Modifier
+            .fillMaxSize()
+            .padding(bottom = padding.calculateBottomPadding())
+        ) {
             // MapScreen은 항상 컴포지션에 유지 — AndroidView 인스턴스(지도 상태)를 보존한다.
             MapScreen(
                 modifier = Modifier

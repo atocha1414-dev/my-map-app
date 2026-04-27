@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MyLocation
@@ -248,7 +249,8 @@ fun MapScreen(
                 isTracking = isTracking,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(16.dp)
+                    .statusBarsPadding()   // 카메라·상태바 아래부터 배치
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
             )
         }
 
