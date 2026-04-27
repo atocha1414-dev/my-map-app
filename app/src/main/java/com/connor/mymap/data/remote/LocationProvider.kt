@@ -39,7 +39,7 @@ class LocationProvider(context: Context) {
                             longitude = location.longitude,
                             accuracy = location.accuracy
                         )
-                        Logger.d(TAG, "Got location: $userLocation")
+                        Logger.d(TAG, "Got current location, accuracy=${location.accuracy}m")
                         continuation.resume(userLocation)
                     }
                 }

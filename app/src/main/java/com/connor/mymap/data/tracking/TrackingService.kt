@@ -28,16 +28,26 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 class TrackingService : Service() {
 
     private lateinit var fusedClient: FusedLocationProviderClient
     private lateinit var trackingStorage: TrackingStorage
+    @Volatile
     private var lastAcceptedPoint: TrackingPoint? = null
+    // 변경 이유: serviceScope.launch(Dispatchers.Default)에서 쓰고
+    // locationCallback(mainLooper)에서 읽는다. 메모리 가시성 보장 위해 @Volatile 필요.
+    @Volatile
+    private var activeSegmentIndex = 0
+    @Volatile
+    private var isStartingTracking = false
+    @Volatile
+    private var isLocationUpdatesRegistered = false
+    private var startJob: Job? = null
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -48,18 +58,21 @@ class TrackingService : Service() {
                     latitude = location.latitude,
                     longitude = location.longitude,
                     accuracy = location.accuracy,
-                    timestampMillis = location.time
+                    timestampMillis = location.time,
+                    segmentIndex = activeSegmentIndex
                 )
 
                 if (!TrackingCalculator.shouldAcceptPoint(lastAcceptedPoint, point)) {
-                    Logger.d(TAG, "Track point ignored by GPS filter: $point")
+                    Logger.d(TAG, "Track point ignored by GPS filter")
                     return@forEach
                 }
 
                 lastAcceptedPoint = point
                 TrackingState.addTrackPoint(point)
-                serviceScope.launch { trackingStorage.appendPoint(point) }
-                Logger.d(TAG, "Track point saved: $point")
+                serviceScope.launch {
+                    trackingStorage.appendPoint(point)
+                }
+                Logger.d(TAG, "Track point saved, accuracy=${point.accuracy}m")
             }
         }
     }
@@ -84,6 +97,8 @@ class TrackingService : Service() {
 
     override fun onDestroy() {
         fusedClient.removeLocationUpdates(locationCallback)
+        isLocationUpdatesRegistered = false
+        isStartingTracking = false
         TrackingState.setTracking(false)
         serviceScope.cancel()
         super.onDestroy()
@@ -91,6 +106,11 @@ class TrackingService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun startTracking() {
+        if (isStartingTracking || isLocationUpdatesRegistered) {
+            Logger.d(TAG, "Tracking already starting or running")
+            return
+        }
+
         if (!hasFineLocationPermission()) {
             Logger.w(TAG, "Cannot start tracking without fine location permission")
             stopSelf()
@@ -100,43 +120,68 @@ class TrackingService : Service() {
         // 정책 반영: 백그라운드 경로 기록은 사용자가 명시적으로 시작한 경우에만
         // ForegroundService로 실행하고, 추적 중임을 고정 알림으로 계속 표시한다.
         startForeground(NOTIFICATION_ID, buildNotification())
+        isStartingTracking = true
 
-        // 변경 이유: 시스템이 START_STICKY로 서비스를 재시작하면 이 메서드가 다시 불리는데,
-        // 이 때 진행 중인 세션의 시작 시각을 덮어쓰면 UI 타이머가 리셋된다.
-        // 디스크에 저장된 세션 시작 시각이 있으면 재사용하고, 없으면 새로 시작한다.
-        // (runBlocking은 onStartCommand 동기 흐름을 유지하기 위해 짧은 파일 IO 한 번에만 사용)
-        val resumedStart = runBlocking { trackingStorage.readSessionStart() }
-        val startedAt = if (resumedStart != null) {
-            Logger.d(TAG, "Resuming session that started at $resumedStart")
-            resumedStart
-        } else {
-            val now = System.currentTimeMillis()
-            serviceScope.launch { trackingStorage.saveSessionStart(now) }
-            now
+        startJob = serviceScope.launch {
+            try {
+                // 변경 이유: 서비스 시작 경로에서 runBlocking으로 파일 IO를 기다리면
+                // 트랙 파일이 커졌을 때 메인 스레드 지연/ANR 위험이 있다.
+                // 세션 복구와 마지막 포인트 조회를 백그라운드에서 끝낸 뒤 위치 업데이트를 등록한다.
+                val resumedStart = trackingStorage.readSessionStart()
+                val startedAt = resumedStart ?: System.currentTimeMillis().also { now ->
+                    trackingStorage.saveSessionStart(now)
+                }
+                if (resumedStart != null) {
+                    Logger.d(TAG, "Resuming existing tracking session")
+                }
+
+                val lastPoint = trackingStorage.readLastPoint()
+                activeSegmentIndex = if (resumedStart != null) {
+                    lastPoint?.segmentIndex ?: 0
+                } else {
+                    (lastPoint?.segmentIndex ?: -1) + 1
+                }
+                TrackingState.startTracking(startedAt)
+                lastAcceptedPoint = if (resumedStart != null) lastPoint else null
+
+                val request = LocationRequest.Builder(
+                    Priority.PRIORITY_HIGH_ACCURACY,
+                    LOCATION_INTERVAL_MILLIS
+                )
+                    .setMinUpdateIntervalMillis(FASTEST_LOCATION_INTERVAL_MILLIS)
+                    .setMinUpdateDistanceMeters(MIN_DISTANCE_METERS)
+                    .build()
+
+                fusedClient.requestLocationUpdates(request, locationCallback, mainLooper)
+                isLocationUpdatesRegistered = true
+                Logger.d(TAG, "Background tracking started")
+            } catch (e: SecurityException) {
+                Logger.w(TAG, "Location permission revoked while starting tracking", e)
+                stopSelf()
+            } catch (e: Exception) {
+                Logger.e(TAG, "Failed to start background tracking", e)
+                stopSelf()
+            } finally {
+                isStartingTracking = false
+            }
         }
-        TrackingState.startTracking(startedAt)
-
-        lastAcceptedPoint = runBlocking { trackingStorage.readPoints() }.lastOrNull()
-
-        val request = LocationRequest.Builder(
-            Priority.PRIORITY_HIGH_ACCURACY,
-            LOCATION_INTERVAL_MILLIS
-        )
-            .setMinUpdateIntervalMillis(FASTEST_LOCATION_INTERVAL_MILLIS)
-            .setMinUpdateDistanceMeters(MIN_DISTANCE_METERS)
-            .build()
-
-        fusedClient.requestLocationUpdates(request, locationCallback, mainLooper)
-        Logger.d(TAG, "Background tracking started")
     }
 
     private fun stopTracking() {
+        startJob?.cancel()
         fusedClient.removeLocationUpdates(locationCallback)
+        isLocationUpdatesRegistered = false
+        isStartingTracking = false
         TrackingState.setTracking(false)
-        serviceScope.launch { trackingStorage.clearSession() }
-        Logger.d(TAG, "Background tracking stopped")
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        serviceScope.launch {
+            // 변경 이유: clearSession()을 비동기로 던진 직후 stopSelf()를 호출하면
+            // onDestroy()에서 serviceScope가 취소되어 current_session.txt가 남을 수 있다.
+            // 세션 마커 삭제를 끝낸 뒤 서비스를 종료해 유령 세션 복구를 막는다.
+            trackingStorage.clearSession()
+            Logger.d(TAG, "Background tracking stopped")
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
     }
 
     private fun hasFineLocationPermission(): Boolean {

@@ -11,6 +11,7 @@ object TrackingCalculator {
 
         val distanceMeters = points
             .zipWithNext()
+            .filter { (from, to) -> from.segmentIndex == to.segmentIndex }
             .sumOf { (from, to) -> from.distanceTo(to).toDouble() }
             .toFloat()
 
@@ -69,7 +70,7 @@ object TrackingCalculator {
         return results[0]
     }
 
-    private const val MAX_ACCEPTED_ACCURACY_METERS = 50f
+    private const val MAX_ACCEPTED_ACCURACY_METERS = 100f
     private const val MIN_ACCEPTED_DISTANCE_METERS = 3f
     private const val MAX_ACCEPTED_SPEED_METERS_PER_SECOND = 55.6f // about 200 km/h
 }

@@ -2,6 +2,7 @@ package com.connor.mymap.data.local
 
 import android.content.Context
 import com.connor.mymap.domain.model.TrackingPoint
+import com.connor.mymap.util.Logger
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -21,55 +22,100 @@ class TrackingStorage(context: Context) {
     private val sessionFile = File(context.applicationContext.filesDir, SESSION_FILE_NAME)
 
     suspend fun appendPoint(point: TrackingPoint) = withContext(ioDispatcher) {
-        trackFile.appendText(point.toCsvLine())
+        runCatching {
+            trackFile.appendText(point.toCsvLine())
+        }.onFailure { e ->
+            Logger.e(TAG, "Failed to append tracking point", e)
+        }
     }
 
     suspend fun readPoints(): List<TrackingPoint> = withContext(ioDispatcher) {
-        if (!trackFile.exists()) return@withContext emptyList()
+        runCatching {
+            if (!trackFile.exists()) return@runCatching emptyList()
 
-        trackFile
-            .readLines()
-            .mapNotNull { line -> line.toTrackingPointOrNull() }
+            trackFile
+                .readLines()
+                .mapNotNull { line -> line.toTrackingPointOrNull() }
+        }.getOrElse { e ->
+            Logger.e(TAG, "Failed to read tracking points", e)
+            emptyList()
+        }
+    }
+
+    suspend fun readLastPoint(): TrackingPoint? = withContext(ioDispatcher) {
+        runCatching {
+            if (!trackFile.exists()) return@runCatching null
+
+            var lastPoint: TrackingPoint? = null
+            trackFile.bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    line.toTrackingPointOrNull()?.let { lastPoint = it }
+                }
+            }
+            lastPoint
+        }.getOrElse { e ->
+            Logger.e(TAG, "Failed to read last tracking point", e)
+            null
+        }
     }
 
     suspend fun clearPoints() = withContext(ioDispatcher) {
-        if (trackFile.exists()) {
-            trackFile.delete()
+        runCatching {
+            if (trackFile.exists()) {
+                trackFile.delete()
+            }
+        }.onFailure { e ->
+            Logger.e(TAG, "Failed to clear tracking points", e)
         }
     }
 
     suspend fun saveSessionStart(startedAtMillis: Long) = withContext(ioDispatcher) {
-        sessionFile.writeText(startedAtMillis.toString())
+        runCatching {
+            sessionFile.writeText(startedAtMillis.toString())
+        }.onFailure { e ->
+            Logger.e(TAG, "Failed to save tracking session marker", e)
+        }
     }
 
     suspend fun readSessionStart(): Long? = withContext(ioDispatcher) {
-        if (!sessionFile.exists()) return@withContext null
-        sessionFile.readText().trim().toLongOrNull()
+        runCatching {
+            if (!sessionFile.exists()) return@runCatching null
+            sessionFile.readText().trim().toLongOrNull()
+        }.getOrElse { e ->
+            Logger.e(TAG, "Failed to read tracking session marker", e)
+            null
+        }
     }
 
     suspend fun clearSession() = withContext(ioDispatcher) {
-        if (sessionFile.exists()) {
-            sessionFile.delete()
+        runCatching {
+            if (sessionFile.exists()) {
+                sessionFile.delete()
+            }
+        }.onFailure { e ->
+            Logger.e(TAG, "Failed to clear tracking session marker", e)
         }
     }
 
     private fun TrackingPoint.toCsvLine(): String {
-        return "$timestampMillis,$latitude,$longitude,$accuracy\n"
+        return "$timestampMillis,$latitude,$longitude,$accuracy,$segmentIndex\n"
     }
 
     private fun String.toTrackingPointOrNull(): TrackingPoint? {
         val parts = split(",")
-        if (parts.size != 4) return null
+        if (parts.size !in 4..5) return null
 
         return TrackingPoint(
             timestampMillis = parts[0].toLongOrNull() ?: return null,
             latitude = parts[1].toDoubleOrNull() ?: return null,
             longitude = parts[2].toDoubleOrNull() ?: return null,
-            accuracy = parts[3].toFloatOrNull() ?: return null
+            accuracy = parts[3].toFloatOrNull() ?: return null,
+            segmentIndex = parts.getOrNull(4)?.toIntOrNull() ?: 0
         )
     }
 
     companion object {
+        private const val TAG = "TrackingStorage"
         private const val TRACK_FILE_NAME = "current_track.csv"
         private const val SESSION_FILE_NAME = "current_session.txt"
 

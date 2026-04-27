@@ -32,12 +32,14 @@ class TrackingHistoryStorage(context: Context) {
         val id = endedAtMillis.toString()
         val file = File(historyDir, "$id$FILE_EXTENSION")
 
-        val meta = "META|$startedAtMillis|$endedAtMillis|$distanceMeters|$durationMillis|${points.size}\n"
-        val pointLines = points.joinToString(separator = "") { p ->
-            "POINT|${p.timestampMillis}|${p.latitude}|${p.longitude}|${p.accuracy}\n"
+        // 변경 이유: 장시간 트래킹(수천 포인트)이면 joinToString으로 1MB+ 문자열을 만들어
+        // 메모리에 올리는 게 부담된다. BufferedWriter로 한 줄씩 흘려보낸다.
+        file.bufferedWriter().use { writer ->
+            writer.write("META|$startedAtMillis|$endedAtMillis|$distanceMeters|$durationMillis|${points.size}\n")
+            points.forEach { p ->
+                writer.write("POINT|${p.timestampMillis}|${p.latitude}|${p.longitude}|${p.accuracy}|${p.segmentIndex}\n")
+            }
         }
-
-        file.writeText(meta + pointLines)
 
         TrackingSession(
             id = id,
@@ -57,6 +59,38 @@ class TrackingHistoryStorage(context: Context) {
             ?.sortedByDescending { it.endedAtMillis }
             ?: emptyList()
     }
+
+    suspend fun loadPoints(id: String, maxPoints: Int = MAX_RENDER_POINTS): List<TrackingPoint> =
+        withContext(ioDispatcher) {
+            val file = File(historyDir, "$id$FILE_EXTENSION")
+            if (!file.exists()) return@withContext emptyList()
+
+            val all = mutableListOf<TrackingPoint>()
+            file.bufferedReader().use { reader ->
+                reader.readLine() // META 줄 건너뜀
+                var line = reader.readLine()
+                while (line != null) {
+                    val p = line.split("|")
+                    if (p.size >= 5 && p[0] == "POINT") {
+                        val ts = p[1].toLongOrNull()
+                        val lat = p[2].toDoubleOrNull()
+                        val lon = p[3].toDoubleOrNull()
+                        val acc = p[4].toFloatOrNull()
+                        val segmentIndex = p.getOrNull(5)?.toIntOrNull() ?: 0
+                        if (ts != null && lat != null && lon != null && acc != null) {
+                            all += TrackingPoint(lat, lon, acc, ts, segmentIndex)
+                        }
+                    }
+                    line = reader.readLine()
+                }
+            }
+
+            if (maxPoints <= 0 || all.size <= maxPoints) all
+            else {
+                val step = all.size / maxPoints
+                all.filterIndexed { i, _ -> i % step == 0 }
+            }
+        }
 
     suspend fun delete(id: String) = withContext(ioDispatcher) {
         File(historyDir, "$id$FILE_EXTENSION").takeIf { it.exists() }?.delete()
@@ -84,6 +118,7 @@ class TrackingHistoryStorage(context: Context) {
     companion object {
         private const val HISTORY_DIR_NAME = "history"
         private const val FILE_EXTENSION = ".txt"
+        private const val MAX_RENDER_POINTS = 300
 
         private val ioDispatcher: CoroutineDispatcher =
             Dispatchers.IO.limitedParallelism(1)

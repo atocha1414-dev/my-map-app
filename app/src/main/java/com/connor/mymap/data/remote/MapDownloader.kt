@@ -19,6 +19,8 @@ class MapDownloader(
 ) {
     companion object {
         private const val TAG = "MapDownloader"
+        private const val PROGRESS_INTERVAL_MILLIS = 250L
+        private const val PROGRESS_STEP_BYTES = 512 * 1024L
     }
 
     private val httpClient by lazy {
@@ -53,45 +55,59 @@ class MapDownloader(
             Logger.i(TAG, "Starting download: $url")
 
             val request = Request.Builder().url(url).build()
-            val response = httpClient.newCall(request).execute()
+            httpClient.newCall(request).execute().use { response ->
 
-            if (!response.isSuccessful) {
-                val error = "HTTP ${response.code}: ${response.message}"
-                Logger.e(TAG, "Download failed: $error")
-                return@withContext Result.failure(Exception(error))
-            }
+                if (!response.isSuccessful) {
+                    val error = "HTTP ${response.code}: ${response.message}"
+                    Logger.e(TAG, "Download failed: $error")
+                    return@withContext Result.failure(Exception(error))
+                }
 
-            val body = response.body
-                ?: return@withContext Result.failure(Exception("응답 본문이 비어있습니다"))
+                val body = response.body
+                    ?: return@withContext Result.failure(Exception("응답 본문이 비어있습니다"))
 
-            val totalBytes = body.contentLength()
-            var downloadedBytes = 0L
+                val totalBytes = body.contentLength()
+                var downloadedBytes = 0L
+                var lastProgressBytes = 0L
+                var lastProgressAtMillis = 0L
 
-            val tempFile = fileStorage.getTempFile(filename)
+                val tempFile = fileStorage.getTempFile(filename)
 
-            FileOutputStream(tempFile).use { output ->
-                body.byteStream().use { input ->
-                    val buffer = ByteArray(Constants.Network.BUFFER_SIZE)
-                    var bytesRead: Int
+                FileOutputStream(tempFile).use { output ->
+                    body.byteStream().use { input ->
+                        val buffer = ByteArray(Constants.Network.BUFFER_SIZE)
+                        var bytesRead: Int
 
-                    while (input.read(buffer).also { bytesRead = it } != -1) {
-                        output.write(buffer, 0, bytesRead)
-                        downloadedBytes += bytesRead
+                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                            output.write(buffer, 0, bytesRead)
+                            downloadedBytes += bytesRead
 
-                        onProgress(Progress(downloadedBytes, totalBytes))
+                            val now = System.currentTimeMillis()
+                            val enoughBytes =
+                                downloadedBytes - lastProgressBytes >= PROGRESS_STEP_BYTES
+                            val enoughTime =
+                                now - lastProgressAtMillis >= PROGRESS_INTERVAL_MILLIS
+                            val completed = totalBytes > 0L && downloadedBytes >= totalBytes
+
+                            if (enoughBytes || enoughTime || completed) {
+                                lastProgressBytes = downloadedBytes
+                                lastProgressAtMillis = now
+                                onProgress(Progress(downloadedBytes, totalBytes))
+                            }
+                        }
                     }
                 }
-            }
 
-            // 완료되면 최종 이름으로 변경
-            val finalized = fileStorage.finalizeTempFile(filename)
-            if (!finalized) {
-                return@withContext Result.failure(Exception("파일 저장에 실패했습니다"))
-            }
+                // 완료되면 최종 이름으로 변경
+                val finalized = fileStorage.finalizeTempFile(filename)
+                if (!finalized) {
+                    return@withContext Result.failure(Exception("파일 저장에 실패했습니다"))
+                }
 
-            val finalPath = fileStorage.getMapFile(filename).absolutePath
-            Logger.i(TAG, "Download completed: $finalPath ($downloadedBytes bytes)")
-            Result.success(finalPath)
+                val finalPath = fileStorage.getMapFile(filename).absolutePath
+                Logger.i(TAG, "Download completed: $downloadedBytes bytes")
+                Result.success(finalPath)
+            }
 
         } catch (e: Exception) {
             Logger.e(TAG, "Download error", e)

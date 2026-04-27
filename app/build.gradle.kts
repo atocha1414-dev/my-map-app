@@ -16,11 +16,19 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField(
+            "String",
+            "MAP_DOWNLOAD_BASE_URL",
+            "\"https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev\""
+        )
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // 출시 빌드는 R8로 미사용 코드 제거와 난독화를 적용한다.
+            // 위치 기반 앱은 내부 구현과 네트워크 URL 노출을 최소화하는 편이 안전하다.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -36,6 +44,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

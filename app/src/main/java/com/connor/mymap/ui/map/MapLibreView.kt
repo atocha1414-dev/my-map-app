@@ -3,7 +3,10 @@ package com.connor.mymap.ui.map
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -14,6 +17,7 @@ import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.domain.model.UserLocation
 import com.connor.mymap.util.Constants
 import com.connor.mymap.util.Logger
+import com.connor.mymap.util.buildOfflineMapStyle
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
@@ -22,6 +26,7 @@ import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
@@ -59,6 +64,7 @@ fun MapLibreView(
     mapFilePath: String,
     myLocation: UserLocation?,
     trackPoints: List<TrackingPoint>,
+    fitBounds: LatLngBounds? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -69,13 +75,17 @@ fun MapLibreView(
         true
     }
 
-    // MapView와 MapLibreMap 참조 저장
-    val mapViewState = remember { MapViewState() }
+    // 변경 이유: MapLibre 스타일 로딩은 비동기다.
+    // 일반 var 필드에 담으면 값이 채워져도 Compose가 모르므로 LaunchedEffect가 재실행되지 않아
+    // "처음 1회 실행 → 그때 style==null → return → 영영 라인 안 그림" 버그가 난다.
+    // mutableStateOf로 두고 LaunchedEffect의 key로 함께 사용한다.
+    var mapLibreMap by remember { mutableStateOf<MapLibreMap?>(null) }
+    var mapStyle by remember { mutableStateOf<Style?>(null) }
 
     val mapView = remember {
         createMapView(context, mapFilePath) { map, style ->
-            mapViewState.map = map
-            mapViewState.style = style
+            mapLibreMap = map
+            mapStyle = style
         }
     }
 
@@ -105,10 +115,11 @@ fun MapLibreView(
     }
 
     // 내 위치가 업데이트되면 마커 갱신 + 카메라 이동
-    LaunchedEffect(myLocation) {
+    // mapStyle을 키로 함께 묶어, 스타일이 늦게 로드되어도 한 번 더 실행되게 한다.
+    LaunchedEffect(myLocation, mapStyle) {
         val location = myLocation ?: return@LaunchedEffect
-        val map = mapViewState.map ?: return@LaunchedEffect
-        val style = mapViewState.style ?: return@LaunchedEffect
+        val map = mapLibreMap ?: return@LaunchedEffect
+        val style = mapStyle ?: return@LaunchedEffect
 
         updateMyLocationPointer(style, location)
 
@@ -121,23 +132,33 @@ fun MapLibreView(
         )
     }
 
-    LaunchedEffect(trackPoints) {
-        val style = mapViewState.style ?: return@LaunchedEffect
+    // 상세/재생 화면 진입 시 전체 경로가 한눈에 들어오도록 경계에 맞춰 카메라를 이동한다.
+    // fitBounds가 null이면 즉시 반환하므로 홈 화면의 카메라 동작과 충돌하지 않는다.
+    LaunchedEffect(fitBounds, mapStyle) {
+        val bounds = fitBounds ?: return@LaunchedEffect
+        val map = mapLibreMap ?: return@LaunchedEffect
+        mapStyle ?: return@LaunchedEffect
+        map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, 128))
+    }
+
+    LaunchedEffect(trackPoints, mapStyle) {
+        val style = mapStyle ?: return@LaunchedEffect
         updateTrackLine(style, trackPoints)
+        // 최신 GPS 포인트로 파란 위치 점을 카메라 이동 없이 업데이트한다.
+        // myLocation(버튼 탭)과 달리 카메라는 그대로 두고 점만 움직인다.
+        if (trackPoints.isNotEmpty()) {
+            val latest = trackPoints.last()
+            updateMyLocationPointer(
+                style,
+                UserLocation(latest.latitude, latest.longitude, latest.accuracy)
+            )
+        }
     }
 
     AndroidView(
         factory = { mapView },
         modifier = modifier
     )
-}
-
-/**
- * MapView 상태 보관
- */
-private class MapViewState {
-    var map: MapLibreMap? = null
-    var style: Style? = null
 }
 
 /**
@@ -157,7 +178,7 @@ private fun updateMyLocationPointer(
         }
 
     source.setGeoJson(location.toMyLocationFeature())
-    Logger.d(TAG, "Location pointer updated: $location")
+    Logger.d(TAG, "Location pointer updated")
 }
 
 private fun addMyLocationLayers(style: Style) {
@@ -221,15 +242,17 @@ private fun updateTrackLine(
 }
 
 private fun List<TrackingPoint>.toTrackFeatureCollection(): FeatureCollection {
-    if (size < 2) return emptyTrackFeatureCollection()
+    val features = groupBy { it.segmentIndex }
+        .values
+        .filter { segment -> segment.size >= 2 }
+        .map { segment ->
+            val points = segment.map { point ->
+                Point.fromLngLat(point.longitude, point.latitude)
+            }
+            Feature.fromGeometry(LineString.fromLngLats(points))
+        }
 
-    val points = map { point ->
-        Point.fromLngLat(point.longitude, point.latitude)
-    }
-
-    return FeatureCollection.fromFeature(
-        Feature.fromGeometry(LineString.fromLngLats(points))
-    )
+    return FeatureCollection.fromFeatures(features)
 }
 
 private fun emptyTrackFeatureCollection(): FeatureCollection {
@@ -250,7 +273,7 @@ private fun createMapView(
         getMapAsync { map ->
             Logger.d(TAG, "Map ready, loading style from: $mapFilePath")
 
-            val styleJson = buildMapStyle(mapFilePath)
+            val styleJson = buildOfflineMapStyle(mapFilePath)
             map.setStyle(Style.Builder().fromJson(styleJson)) { style ->
                 Logger.d(TAG, "Style loaded successfully")
                 onMapReady(map, style)
@@ -277,87 +300,3 @@ private fun createMapView(
     }
 }
 
-/**
- * 지도 스타일 JSON
- */
-private fun buildMapStyle(mapFilePath: String): String {
-    return """
-    {
-      "version": 8,
-      "name": "MyMap",
-      "sources": {
-        "openmaptiles": {
-          "type": "vector",
-          "url": "mbtiles:///$mapFilePath"
-        }
-      },
-      "layers": [
-        {
-          "id": "background",
-          "type": "background",
-          "paint": { "background-color": "#f8f4f0" }
-        },
-        {
-          "id": "water",
-          "type": "fill",
-          "source": "openmaptiles",
-          "source-layer": "water",
-          "paint": { "fill-color": "#a0c8f0" }
-        },
-        {
-          "id": "landuse",
-          "type": "fill",
-          "source": "openmaptiles",
-          "source-layer": "landuse",
-          "paint": { "fill-color": "#e8e0d0", "fill-opacity": 0.5 }
-        },
-        {
-          "id": "park",
-          "type": "fill",
-          "source": "openmaptiles",
-          "source-layer": "park",
-          "paint": { "fill-color": "#c8e6c0" }
-        },
-        {
-          "id": "buildings",
-          "type": "fill",
-          "source": "openmaptiles",
-          "source-layer": "building",
-          "minzoom": 13,
-          "paint": { "fill-color": "#d8d0c0", "fill-outline-color": "#b8b0a0" }
-        },
-        {
-          "id": "roads-minor",
-          "type": "line",
-          "source": "openmaptiles",
-          "source-layer": "transportation",
-          "filter": ["in", "class", "minor", "service", "track"],
-          "minzoom": 13,
-          "paint": { "line-color": "#ffffff", "line-width": 1 }
-        },
-        {
-          "id": "roads-major",
-          "type": "line",
-          "source": "openmaptiles",
-          "source-layer": "transportation",
-          "filter": ["in", "class", "primary", "secondary", "tertiary"],
-          "paint": {
-            "line-color": "#ffffff",
-            "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1, 16, 4]
-          }
-        },
-        {
-          "id": "highways",
-          "type": "line",
-          "source": "openmaptiles",
-          "source-layer": "transportation",
-          "filter": ["in", "class", "motorway", "trunk"],
-          "paint": {
-            "line-color": "#fcd16e",
-            "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1, 16, 6]
-          }
-        }
-      ]
-    }
-    """.trimIndent()
-}

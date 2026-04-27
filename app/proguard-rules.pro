@@ -1,21 +1,46 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# ────────────────────────────────────────────────────────
+# 출시 빌드 R8/Proguard 룰
+# 대부분의 라이브러리는 consumerProguardFiles로 자체 룰을 포함하므로
+# 여기서는 reflection/native에 의존해 깨지기 쉬운 항목만 명시한다.
+# ────────────────────────────────────────────────────────
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# 스택 트레이스를 사람이 읽을 수 있게 라인 번호 보존
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# native 메서드 보호 (MapLibre가 native 의존)
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# ─── MapLibre ───────────────────────────────────────────
+# MapLibre는 native + reflection 의존이 많아 보수적으로 keep
+-keep class org.maplibre.android.** { *; }
+-keep interface org.maplibre.android.** { *; }
+-keep class org.maplibre.geojson.** { *; }
+-keep class com.mapbox.android.gestures.** { *; }
+-dontwarn org.maplibre.android.**
+-dontwarn com.mapbox.android.gestures.**
+
+# ─── Play Services Location ─────────────────────────────
+-keep class com.google.android.gms.location.** { *; }
+-keep interface com.google.android.gms.location.** { *; }
+-dontwarn com.google.android.gms.**
+
+# ─── OkHttp / Okio ──────────────────────────────────────
+# AAR consumer rule이 있지만 Conscrypt/BouncyCastle 경고 억제
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
+
+# ─── Kotlin / Coroutines ────────────────────────────────
+-keepclassmembers class kotlinx.coroutines.** {
+    volatile <fields>;
+}
+-keep class kotlin.Metadata { *; }
+-dontwarn kotlinx.coroutines.**
+
+# ─── 도메인 모델 (GeoJSON 직렬화 등에서 reflection 가능성) ──
+-keep class com.connor.mymap.domain.model.** { *; }

@@ -45,6 +45,10 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val TAG = "MapViewModel"
         private const val MIN_SAVED_DURATION_MILLIS = 10_000L
+        // 변경 이유: 서비스가 OS에 의해 강제 종료되거나 기기 재부팅으로 죽었을 때
+        // 세션 마커만 남는 경우가 있다. 마지막 포인트 시각으로부터 이 시간이 지나면
+        // "어제 세션을 오늘 이어 그리는" 좀비 상태로 보고 끊는다.
+        private const val STALE_SESSION_THRESHOLD_MILLIS = 30L * 60L * 1000L
     }
 
     private val fileStorage = MapFileStorage(application)
@@ -90,15 +94,28 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
 
             val sessionStart = trackingStorage.readSessionStart()
             if (sessionStart != null) {
-                TrackingState.startTracking(sessionStart)
-                if (PermissionHelper.hasLocationPermission(getApplication())) {
-                    TrackingService.start(getApplication())
-                    Logger.d(TAG, "Resumed tracking session started at $sessionStart")
-                } else {
-                    // 권한이 사라진 채 앱이 재진입한 경우, 디스크의 세션 메타만 정리한다.
+                val referenceTime = points.lastOrNull()?.timestampMillis ?: sessionStart
+                val gapMillis = System.currentTimeMillis() - referenceTime
+
+                if (gapMillis > STALE_SESSION_THRESHOLD_MILLIS) {
+                    // 좀비 세션: 기존 데이터를 완료된 세션으로 보관하고 현재 세션은 정리한다.
+                    archiveStaleSession(sessionStart, referenceTime, points)
+                    trackingStorage.clearPoints()
                     trackingStorage.clearSession()
+                    TrackingState.clearTrackPoints()
                     TrackingState.setTracking(false)
-                    Logger.w(TAG, "Session marker found but location permission missing, cleared")
+                    Logger.w(TAG, "Stale session archived (gap=${gapMillis}ms)")
+                } else {
+                    TrackingState.startTracking(sessionStart)
+                    if (PermissionHelper.hasLocationPermission(getApplication())) {
+                        TrackingService.start(getApplication())
+                        Logger.d(TAG, "Resumed tracking session")
+                    } else {
+                        // 권한이 사라진 채 앱이 재진입한 경우, 디스크의 세션 메타만 정리한다.
+                        trackingStorage.clearSession()
+                        TrackingState.setTracking(false)
+                        Logger.w(TAG, "Session marker found but location permission missing, cleared")
+                    }
                 }
             }
         }
@@ -252,20 +269,30 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
         TrackingService.stop(getApplication())
 
         viewModelScope.launch {
-            // 의미 있는 기록만 저장: 10초 이상 진행했거나 GPS 포인트가 1개 이상.
-            if (totalDurationMillis >= MIN_SAVED_DURATION_MILLIS || pointsSnapshot.isNotEmpty()) {
-                val endedAt = System.currentTimeMillis()
-                val distance = TrackingCalculator.calculateStats(pointsSnapshot).distanceMeters
-                historyStorage.save(
-                    startedAtMillis = (endedAt - totalDurationMillis).coerceAtLeast(0L),
-                    endedAtMillis = endedAt,
-                    durationMillis = totalDurationMillis,
-                    distanceMeters = distance,
-                    points = pointsSnapshot
-                )
+            var canClearCurrentTrack = true
+            try {
+                // 의미 있는 기록만 저장: 10초 이상 진행했거나 GPS 포인트가 1개 이상.
+                if (totalDurationMillis >= MIN_SAVED_DURATION_MILLIS || pointsSnapshot.isNotEmpty()) {
+                    canClearCurrentTrack = false
+                    val endedAt = System.currentTimeMillis()
+                    val distance = TrackingCalculator.calculateStats(pointsSnapshot).distanceMeters
+                    historyStorage.save(
+                        startedAtMillis = (endedAt - totalDurationMillis).coerceAtLeast(0L),
+                        endedAtMillis = endedAt,
+                        durationMillis = totalDurationMillis,
+                        distanceMeters = distance,
+                        points = pointsSnapshot
+                    )
+                    canClearCurrentTrack = true
+                }
+            } catch (e: Exception) {
+                Logger.e(TAG, "Failed to save tracking history", e)
+            } finally {
+                if (canClearCurrentTrack) {
+                    trackingStorage.clearPoints()
+                    TrackingState.clearTrackPoints()
+                }
             }
-            trackingStorage.clearPoints()
-            TrackingState.clearTrackPoints()
         }
     }
 
@@ -278,6 +305,34 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * OS 강제 종료/재부팅으로 끊긴 세션을 완료된 기록으로 옮긴다.
+     * referenceTime 은 마지막 GPS 포인트 시각(없으면 sessionStart)으로,
+     * "지금"이 아니라 실제 마지막 활동 시각을 종료 시각으로 사용한다.
+     */
+    private suspend fun archiveStaleSession(
+        sessionStart: Long,
+        referenceTime: Long,
+        points: List<TrackingPoint>
+    ) {
+        val durationMillis = (referenceTime - sessionStart).coerceAtLeast(0L)
+        val isWorthSaving = durationMillis >= MIN_SAVED_DURATION_MILLIS || points.isNotEmpty()
+        if (!isWorthSaving) return
+
+        try {
+            val distance = TrackingCalculator.calculateStats(points).distanceMeters
+            historyStorage.save(
+                startedAtMillis = sessionStart,
+                endedAtMillis = referenceTime,
+                durationMillis = durationMillis,
+                distanceMeters = distance,
+                points = points
+            )
+        } catch (e: Exception) {
+            Logger.e(TAG, "Failed to archive stale tracking session", e)
+        }
+    }
+
+    /**
      * 실제로 위치 가져오기
      */
     private fun fetchLocation() {
@@ -285,7 +340,7 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
             val location = locationProvider.getCurrentLocation()
             if (location != null) {
                 _myLocation.value = location
-                Logger.d(TAG, "Location updated: $location")
+                Logger.d(TAG, "Location updated, accuracy=${location.accuracy}m")
             } else {
                 Logger.w(TAG, "Could not fetch location")
             }

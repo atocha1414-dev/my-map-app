@@ -1,11 +1,13 @@
 package com.connor.mymap.util
 
+import com.connor.mymap.BuildConfig
+
 object Constants {
 
     // ═══ 지도 파일 서버 ═══
     object Map {
-        // ⚠️ 본인의 Cloudflare R2 공개 URL로 교체하세요
-        const val DOWNLOAD_BASE_URL = "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev"
+        val DOWNLOAD_BASE_URL: String
+            get() = BuildConfig.MAP_DOWNLOAD_BASE_URL
 
         const val DEFAULT_MAP_FILENAME = "korea.mbtiles"
 
