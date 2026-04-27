@@ -117,9 +117,9 @@ class PlaybackViewModel(
                 val gapElapsed = (targetElapsed - baseElapsed).coerceAtLeast(1L)
                 val speed = _speedMultiplier.value
 
-                // 실제 대기 시간: GPS 간격 ÷ 배속, MIN~MAX로 클램프
+                // 실제 대기 시간: GPS 간격 ÷ 배속 (배속 배율로만 조절)
                 val realDelayMs = (gapElapsed / speed).toLong()
-                    .coerceIn(MIN_DELAY_MS, MAX_DELAY_MS)
+                    .coerceAtLeast(MIN_DELAY_MS)
 
                 // 일시정지 후 재개 시: 이미 표시된 만큼 startWall을 과거로 당겨
                 // → display가 baseElapsed로 튀지 않고 현재 위치에서 이어간다
@@ -205,7 +205,6 @@ class PlaybackViewModel(
     companion object {
         private const val TAG = "PlaybackViewModel"
         private const val MIN_DELAY_MS = 16L
-        private const val MAX_DELAY_MS = 3_000L   // 포인트 간 최대 대기 3초
         private const val DISPLAY_STEP_MS = 50L
 
         fun factory(sessionId: String) = viewModelFactory {
