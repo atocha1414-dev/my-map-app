@@ -1,5 +1,10 @@
 package com.connor.mymap.ui.main
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -12,6 +17,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -31,17 +37,30 @@ import com.connor.mymap.ui.profile.ProfileScreen
 @Composable
 fun MainScreen() {
     var selectedTab by rememberSaveable { mutableStateOf(MainTab.Home) }
+    // 지도 단일 탭으로 토글되는 몰입 모드 — 탭바·트래킹 패널·FAB 모두 숨김
+    var isImmersive by rememberSaveable { mutableStateOf(false) }
+
+    // 프로필 탭으로 이동하면 몰입 모드를 해제한다(프로필에서 탭바가 보여야 다시 홈으로 갈 수 있다).
+    LaunchedEffect(selectedTab) {
+        if (selectedTab != MainTab.Home) isImmersive = false
+    }
 
     Scaffold(
         bottomBar = {
-            NavigationBar {
-                MainTab.entries.forEach { tab ->
-                    NavigationBarItem(
-                        selected = selectedTab == tab,
-                        onClick = { selectedTab = tab },
-                        icon = { Icon(tab.icon, contentDescription = tab.label) },
-                        label = { Text(tab.label) }
-                    )
+            AnimatedVisibility(
+                visible = !isImmersive,
+                enter = slideInVertically { it } + fadeIn(),
+                exit = slideOutVertically { it } + fadeOut()
+            ) {
+                NavigationBar {
+                    MainTab.entries.forEach { tab ->
+                        NavigationBarItem(
+                            selected = selectedTab == tab,
+                            onClick = { selectedTab = tab },
+                            icon = { Icon(tab.icon, contentDescription = tab.label) },
+                            label = { Text(tab.label) }
+                        )
+                    }
                 }
             }
         }
@@ -54,6 +73,8 @@ fun MainScreen() {
         ) {
             // MapScreen은 항상 컴포지션에 유지 — AndroidView 인스턴스(지도 상태)를 보존한다.
             MapScreen(
+                isImmersive = isImmersive,
+                onMapTap = { isImmersive = !isImmersive },
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer { alpha = if (selectedTab == MainTab.Home) 1f else 0f }

@@ -11,6 +11,11 @@ import android.provider.Settings
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -62,6 +67,8 @@ import kotlinx.coroutines.delay
 @Composable
 fun MapScreen(
     modifier: Modifier = Modifier,
+    isImmersive: Boolean = false,
+    onMapTap: () -> Unit = {},
     viewModel: MapViewModel = viewModel()
 ) {
     val context = LocalContext.current
@@ -222,10 +229,16 @@ fun MapScreen(
             mapFilePath = mapFilePath,
             myLocation = myLocation,
             trackPoints = trackPoints,
+            onMapClick = onMapTap,
             modifier = Modifier.fillMaxSize()
         )
 
-        if (isTracking || isPaused || trackPoints.isNotEmpty()) {
+        AnimatedVisibility(
+            visible = !isImmersive && (isTracking || isPaused || trackPoints.isNotEmpty()),
+            enter = fadeIn() + slideInVertically { -it },
+            exit = fadeOut() + slideOutVertically { -it },
+            modifier = Modifier.align(Alignment.TopCenter)
+        ) {
             val displayDurationMillis = when {
                 isTracking -> {
                     val startedAtMillis = trackingStartedAtMillis ?: nowMillis
@@ -248,15 +261,19 @@ fun MapScreen(
                 latestAccuracyMeters = trackingStats.latestAccuracyMeters,
                 isTracking = isTracking,
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
                     .statusBarsPadding()   // 카메라·상태바 아래부터 배치
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             )
         }
 
+        AnimatedVisibility(
+            visible = !isImmersive,
+            enter = fadeIn() + slideInVertically { it },
+            exit = fadeOut() + slideOutVertically { it },
+            modifier = Modifier.align(Alignment.BottomEnd)
+        ) {
         Column(
             modifier = Modifier
-                .align(Alignment.BottomEnd)
                 .padding(16.dp)
         ) {
             when {
@@ -341,13 +358,17 @@ fun MapScreen(
                 )
             }
         }
+        }
 
-        if (trackPoints.isNotEmpty() && !isTracking) {
+        AnimatedVisibility(
+            visible = !isImmersive && trackPoints.isNotEmpty() && !isTracking,
+            enter = fadeIn() + slideInVertically { it },
+            exit = fadeOut() + slideOutVertically { it },
+            modifier = Modifier.align(Alignment.BottomStart)
+        ) {
             FloatingActionButton(
                 onClick = { showClearConfirm = true },
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(16.dp)
+                modifier = Modifier.padding(16.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.Delete,

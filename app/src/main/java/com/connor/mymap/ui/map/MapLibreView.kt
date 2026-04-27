@@ -6,6 +6,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -65,6 +66,7 @@ fun MapLibreView(
     myLocation: UserLocation?,
     trackPoints: List<TrackingPoint>,
     fitBounds: LatLngBounds? = null,
+    onMapClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -139,6 +141,20 @@ fun MapLibreView(
         val map = mapLibreMap ?: return@LaunchedEffect
         mapStyle ?: return@LaunchedEffect
         map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, 128))
+    }
+
+    // 단일 탭 토글: 드래그/핀치/줌은 OnMapClickListener로 잡히지 않으므로 안전하게 분리됨
+    val currentOnMapClick by rememberUpdatedState(onMapClick)
+    DisposableEffect(mapLibreMap) {
+        val map = mapLibreMap
+        val listener = MapLibreMap.OnMapClickListener {
+            currentOnMapClick?.invoke()
+            true
+        }
+        map?.addOnMapClickListener(listener)
+        onDispose {
+            map?.removeOnMapClickListener(listener)
+        }
     }
 
     LaunchedEffect(trackPoints, mapStyle) {
