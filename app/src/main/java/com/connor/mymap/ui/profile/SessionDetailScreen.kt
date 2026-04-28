@@ -30,7 +30,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.activity.compose.BackHandler
@@ -90,160 +89,152 @@ fun SessionDetailScreen(
         onDispose { viewModel.pause() }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    Column(modifier = modifier.fillMaxSize()) {
 
-        // 지도 (전체 화면)
-        if (mapFilePath != null) {
-            MapLibreView(
-                mapFilePath = mapFilePath,
-                myLocation = null,
-                trackPoints = visiblePoints,
-                fitBounds = routeBounds,
-                onMapClick = { isImmersive = !isImmersive },
-                modifier = Modifier.fillMaxSize()
-            )
-        } else {
-            Box(
+        // 상단 바 — 위로 슬라이드 아웃
+        AnimatedVisibility(
+            visible = !isImmersive,
+            enter = slideInVertically { -it } + fadeIn(),
+            exit = slideOutVertically { -it } + fadeOut()
+        ) {
+            Row(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { isImmersive = !isImmersive }
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface)
+                    .statusBarsPadding()
+                    .padding(end = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                PlaybackPathCanvas(
-                    visiblePoints = visiblePoints,
-                    allPoints = allPoints,
-                    modifier = Modifier.fillMaxSize()
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
+                }
+                Text(
+                    text = "경로 재생",
+                    style = MaterialTheme.typography.titleLarge
                 )
             }
         }
 
-        if (isLoading) {
-            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-        }
-
-        // 상단 바 — 위에서 슬라이드
-        AnimatedVisibility(
-            visible = !isImmersive,
-            enter = slideInVertically { -it } + fadeIn(),
-            exit = slideOutVertically { -it } + fadeOut(),
+        // 지도 영역 — 상단 바·컨트롤이 사라지면 weight(1f)로 전체 화면을 채움
+        Box(
             modifier = Modifier
-                .align(Alignment.TopStart)
                 .fillMaxWidth()
+                .weight(1f)
         ) {
-            Surface(
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.93f),
-                shadowElevation = 4.dp
-            ) {
-                Row(
+            if (mapFilePath != null) {
+                MapLibreView(
+                    mapFilePath = mapFilePath,
+                    myLocation = null,
+                    trackPoints = visiblePoints,
+                    fitBounds = routeBounds,
+                    onMapClick = { isImmersive = !isImmersive },
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(end = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { isImmersive = !isImmersive }
                 ) {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
-                    }
-                    Text(
-                        text = "경로 재생",
-                        style = MaterialTheme.typography.titleLarge
+                    PlaybackPathCanvas(
+                        visiblePoints = visiblePoints,
+                        allPoints = allPoints,
+                        modifier = Modifier.fillMaxSize()
                     )
                 }
             }
+
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            }
         }
 
-        // 하단 컨트롤 패널 — 아래에서 슬라이드
+        // 하단 컨트롤 패널 — 아래로 슬라이드 아웃
         AnimatedVisibility(
             visible = !isImmersive,
             enter = slideInVertically { it } + fadeIn(),
-            exit = slideOutVertically { it } + fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .fillMaxWidth()
+            exit = slideOutVertically { it } + fadeOut()
         ) {
-            Surface(
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.93f),
-                shadowElevation = 8.dp
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface)
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
-                Column(
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = formatDuration(displayElapsedMs),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = formatDuration(totalMs),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Slider(
+                    value = if (isDragging) localDragProgress else displayProgress,
+                    onValueChange = { fraction ->
+                        if (!isDragging) {
+                            isDragging = true
+                            wasPlayingBeforeDrag = isPlaying
+                            viewModel.pause()
+                        }
+                        localDragProgress = fraction
+                        viewModel.seekTo(fraction)
+                    },
+                    onValueChangeFinished = {
+                        if (isDragging) {
+                            isDragging = false
+                            if (wasPlayingBeforeDrag) viewModel.play()
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .padding(bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
+                    IconButton(
+                        onClick = viewModel::reset,
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Text(
-                            text = formatDuration(displayElapsedMs),
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Spacer(Modifier.weight(1f))
-                        Text(
-                            text = formatDuration(totalMs),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        Icon(Icons.Default.Replay, contentDescription = "처음으로")
+                    }
+
+                    FilledIconButton(
+                        onClick = { if (isPlaying) viewModel.pause() else viewModel.play() },
+                        modifier = Modifier
+                            .weight(1f)
+                            .size(56.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlaying) "일시정지" else "재생",
+                            modifier = Modifier.size(28.dp)
                         )
                     }
 
-                    Slider(
-                        value = if (isDragging) localDragProgress else displayProgress,
-                        onValueChange = { fraction ->
-                            if (!isDragging) {
-                                isDragging = true
-                                wasPlayingBeforeDrag = isPlaying
-                                viewModel.pause()
-                            }
-                            localDragProgress = fraction
-                            viewModel.seekTo(fraction)
-                        },
-                        onValueChangeFinished = {
-                            if (isDragging) {
-                                isDragging = false
-                                if (wasPlayingBeforeDrag) viewModel.play()
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    TextButton(
+                        onClick = viewModel::cycleSpeed,
+                        modifier = Modifier.weight(1f)
                     ) {
-                        IconButton(
-                            onClick = viewModel::reset,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.Replay, contentDescription = "처음으로")
-                        }
-
-                        FilledIconButton(
-                            onClick = { if (isPlaying) viewModel.pause() else viewModel.play() },
-                            modifier = Modifier
-                                .weight(1f)
-                                .size(56.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlaying) "일시정지" else "재생",
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-
-                        TextButton(
-                            onClick = viewModel::cycleSpeed,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(
-                                text = formatSpeed(speedMultiplier),
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                        }
+                        Text(
+                            text = formatSpeed(speedMultiplier),
+                            style = MaterialTheme.typography.titleMedium
+                        )
                     }
                 }
             }
