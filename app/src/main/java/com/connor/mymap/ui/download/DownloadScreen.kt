@@ -11,9 +11,9 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,10 +44,7 @@ fun DownloadScreen(
             DownloadingView(state = current)
         }
         is DownloadState.Ready -> {
-            MapReadyView(
-                onNavigate = onMapReady,
-                onReset = viewModel::resetMap
-            )
+            LaunchedEffect(Unit) { onMapReady() }
         }
         is DownloadState.Error -> {
             ErrorView(
@@ -164,65 +161,3 @@ private fun DownloadingView(state: DownloadState.InProgress) {
     }
 }
 
-@Composable
-private fun MapReadyView(
-    onNavigate: () -> Unit,
-    onReset: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .systemBarsPadding()
-            .padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(
-            text = "✅",
-            style = MaterialTheme.typography.displayLarge
-        )
-
-        Spacer(Modifier.height(24.dp))
-
-        Text(
-            text = "지도 준비 완료!",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
-
-        Spacer(Modifier.height(16.dp))
-
-        Text(
-            text = "다음 단계에서 지도를 표시할 거예요",
-            style = MaterialTheme.typography.bodyLarge,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(Modifier.height(48.dp))
-
-        Button(
-            onClick = onNavigate,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("지도 열기 (아직 준비 중)")
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        OutlinedButton(
-            onClick = onReset,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("지도 삭제하고 다시 다운로드")
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        Text(
-            text = "(테스트용 버튼)",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
