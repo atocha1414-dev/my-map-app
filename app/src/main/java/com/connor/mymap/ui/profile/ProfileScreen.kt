@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -40,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -106,20 +108,13 @@ private fun SessionListContent(
     loadPoints: suspend (String) -> List<TrackingPoint>
 ) {
     var pendingDeleteId by remember { mutableStateOf<String?>(null) }
+    val bgColor = MaterialTheme.colorScheme.background
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding()   // 카메라·상태바 아래부터 콘텐츠 시작
-            .padding(horizontal = 16.dp, vertical = 16.dp)
+            .statusBarsPadding()
     ) {
-        Text(
-            text = "이동 기록",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.SemiBold
-        )
-        Spacer(Modifier.height(16.dp))
-
         when {
             isLoading && sessions.isEmpty() -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -136,7 +131,18 @@ private fun SessionListContent(
                 }
             }
             else -> {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // LazyColumn이 헤더 뒤까지 올라오도록 전체 영역을 채운다.
+                // contentPadding top으로 첫 아이템이 헤더 아래에서 시작하게 한다.
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        top = 72.dp,
+                        start = 16.dp,
+                        end = 16.dp,
+                        bottom = 16.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     items(sessions, key = { it.id }) { session ->
                         SessionCard(
                             session = session,
@@ -148,6 +154,26 @@ private fun SessionListContent(
                     }
                 }
             }
+        }
+
+        // 반투명 그라디언트 헤더 오버레이 — 아이템이 스크롤되어 올라올 때 뒤로 보인다.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        0.0f to bgColor.copy(alpha = 0.97f),
+                        0.75f to bgColor.copy(alpha = 0.85f),
+                        1.0f to bgColor.copy(alpha = 0f)
+                    )
+                )
+                .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 28.dp)
+        ) {
+            Text(
+                text = "이동 기록",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold
+            )
         }
     }
 
