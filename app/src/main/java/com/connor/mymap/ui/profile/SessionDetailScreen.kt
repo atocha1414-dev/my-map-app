@@ -49,6 +49,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.connor.mymap.domain.model.TrackingPoint
@@ -60,8 +62,20 @@ fun SessionDetailScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // 변경 이유: 기본 viewModel()은 Activity의 ViewModelStore를 공유하므로
+    // 사용자가 여러 세션을 차례로 보면 PlaybackViewModel이 store에 누적되어 메모리 누수.
+    // 화면별 전용 ViewModelStore를 만들어 dispose 시 onCleared가 호출되게 한다.
+    val owner = remember {
+        object : ViewModelStoreOwner {
+            override val viewModelStore: ViewModelStore = ViewModelStore()
+        }
+    }
+    DisposableEffect(owner) {
+        onDispose { owner.viewModelStore.clear() }
+    }
+
     val viewModel: PlaybackViewModel = viewModel(
-        key = sessionId,
+        viewModelStoreOwner = owner,
         factory = PlaybackViewModel.factory(sessionId)
     )
 
