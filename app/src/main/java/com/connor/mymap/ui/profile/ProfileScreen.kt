@@ -9,12 +9,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -24,11 +27,15 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -49,11 +56,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -127,6 +136,7 @@ private fun SessionListContent(
     var isEditMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(emptySet<String>()) }
     var showBulkDeleteConfirm by remember { mutableStateOf(false) }
+    var viewMode by rememberSaveable { mutableStateOf(ViewMode.List) }
     val bgColor = MaterialTheme.colorScheme.background
 
     BackHandler(enabled = isEditMode) {
@@ -162,36 +172,73 @@ private fun SessionListContent(
                         .entries.toList()
                 }
 
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(
-                        top = 72.dp,
-                        start = 16.dp,
-                        end = 16.dp,
-                        bottom = if (isEditMode) 80.dp else 16.dp
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    groupedSessions.forEach { (dateLabel, daySessions) ->
-                        stickyHeader(key = "header_$dateLabel") {
-                            DateSectionHeader(label = dateLabel, bgColor = bgColor)
+                if (viewMode == ViewMode.List) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(
+                            top = 72.dp,
+                            start = 16.dp,
+                            end = 16.dp,
+                            bottom = if (isEditMode) 80.dp else 16.dp
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        groupedSessions.forEach { (dateLabel, daySessions) ->
+                            stickyHeader(key = "header_$dateLabel") {
+                                DateSectionHeader(label = dateLabel, bgColor = bgColor)
+                            }
+                            items(daySessions, key = { it.id }) { session ->
+                                SessionCard(
+                                    session = session,
+                                    onCardClick = { onCardClick(session.id) },
+                                    onDeleteClick = { pendingDeleteId = session.id },
+                                    loadThumbnailFile = { loadThumbnailFile(session.id) },
+                                    loadPoints = { loadPoints(session.id) },
+                                    isEditMode = isEditMode,
+                                    isSelected = session.id in selectedIds,
+                                    onToggleSelect = {
+                                        selectedIds = if (session.id in selectedIds)
+                                            selectedIds - session.id
+                                        else
+                                            selectedIds + session.id
+                                    }
+                                )
+                            }
                         }
-                        items(daySessions, key = { it.id }) { session ->
-                            SessionCard(
-                                session = session,
-                                onCardClick = { onCardClick(session.id) },
-                                onDeleteClick = { pendingDeleteId = session.id },
-                                loadThumbnailFile = { loadThumbnailFile(session.id) },
-                                loadPoints = { loadPoints(session.id) },
-                                isEditMode = isEditMode,
-                                isSelected = session.id in selectedIds,
-                                onToggleSelect = {
-                                    selectedIds = if (session.id in selectedIds)
-                                        selectedIds - session.id
-                                    else
-                                        selectedIds + session.id
-                                }
-                            )
+                    }
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(2),
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(
+                            top = 72.dp,
+                            start = 16.dp,
+                            end = 16.dp,
+                            bottom = if (isEditMode) 80.dp else 16.dp
+                        ),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        groupedSessions.forEach { (dateLabel, daySessions) ->
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                DateSectionHeader(label = dateLabel, bgColor = bgColor)
+                            }
+                            gridItems(daySessions, key = { it.id }) { session ->
+                                ThumbnailGridItem(
+                                    session = session,
+                                    onCardClick = { onCardClick(session.id) },
+                                    loadThumbnailFile = { loadThumbnailFile(session.id) },
+                                    loadPoints = { loadPoints(session.id) },
+                                    isEditMode = isEditMode,
+                                    isSelected = session.id in selectedIds,
+                                    onToggleSelect = {
+                                        selectedIds = if (session.id in selectedIds)
+                                            selectedIds - session.id
+                                        else
+                                            selectedIds + session.id
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -235,6 +282,16 @@ private fun SessionListContent(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
                 )
+                if (sessions.isNotEmpty() && !isEditMode) {
+                    IconButton(onClick = {
+                        viewMode = if (viewMode == ViewMode.List) ViewMode.Grid else ViewMode.List
+                    }) {
+                        Icon(
+                            imageVector = if (viewMode == ViewMode.List) Icons.Default.GridView else Icons.AutoMirrored.Filled.ViewList,
+                            contentDescription = if (viewMode == ViewMode.List) "그리드 보기" else "목록 보기"
+                        )
+                    }
+                }
                 if (sessions.isNotEmpty()) {
                     TextButton(onClick = {
                         if (isEditMode) {
@@ -370,7 +427,8 @@ private fun SessionCard(
         ) {
             TrackingThumbnail(
                 loadThumbnailFile = loadThumbnailFile,
-                loadPoints = loadPoints
+                loadPoints = loadPoints,
+                modifier = Modifier.size(72.dp)
             )
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -411,6 +469,65 @@ private fun SessionCard(
     }
 }
 
+@Composable
+private fun ThumbnailGridItem(
+    session: TrackingSession,
+    onCardClick: () -> Unit,
+    loadThumbnailFile: suspend () -> File?,
+    loadPoints: suspend () -> List<TrackingPoint>,
+    isEditMode: Boolean = false,
+    isSelected: Boolean = false,
+    onToggleSelect: () -> Unit = {}
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f),
+        onClick = if (isEditMode) onToggleSelect else onCardClick,
+        colors = if (isSelected)
+            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        else CardDefaults.cardColors()
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            TrackingThumbnail(
+                loadThumbnailFile = loadThumbnailFile,
+                loadPoints = loadPoints,
+                modifier = Modifier.fillMaxSize()
+            )
+            // 하단 정보 오버레이
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomStart)
+                    .background(Color.Black.copy(alpha = 0.5f))
+                    .padding(8.dp)
+            ) {
+                Column {
+                    Text(
+                        text = formatDate(session.startedAtMillis),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White
+                    )
+                    Text(
+                        text = formatDistance(session.distanceMeters),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+            // 편집 모드 체크박스 오버레이
+            if (isEditMode) {
+                Checkbox(
+                    checked = isSelected,
+                    onCheckedChange = { onToggleSelect() },
+                    modifier = Modifier.align(Alignment.TopEnd)
+                )
+            }
+        }
+    }
+}
+
 /**
  * 세션 썸네일.
  * 1순위: ViewModel이 만들어준 PNG (지도 + 경로)
@@ -434,7 +551,6 @@ private fun TrackingThumbnail(
         value = if (bitmap != null) {
             ThumbnailState.MapImage(bitmap)
         } else {
-            // PNG 못 받음 → 경로 라인 폴백을 위해 포인트 로드
             val points = loadPoints()
             if (points.isNotEmpty()) ThumbnailState.PathFallback(points)
             else ThumbnailState.Empty
@@ -445,7 +561,6 @@ private fun TrackingThumbnail(
 
     Box(
         modifier = modifier
-            .size(72.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(bgColor)
             .semantics { contentDescription = "이동 경로 미리보기" },
@@ -536,6 +651,8 @@ private fun Stat(label: String, value: String) {
         )
     }
 }
+
+private enum class ViewMode { List, Grid }
 
 private fun formatSectionDate(millis: Long): String {
     fun dayStart(ms: Long) = Calendar.getInstance().apply {
