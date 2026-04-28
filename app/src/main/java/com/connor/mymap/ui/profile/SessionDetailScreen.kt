@@ -67,6 +67,7 @@ fun SessionDetailScreen(
 
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val isPlaying by viewModel.isPlaying.collectAsStateWithLifecycle()
+    val canPlay by viewModel.canPlay.collectAsStateWithLifecycle()
     val visiblePoints by viewModel.visiblePoints.collectAsStateWithLifecycle()
     val allPoints by viewModel.allPoints.collectAsStateWithLifecycle()
     val totalMs by viewModel.totalMs.collectAsStateWithLifecycle()
@@ -181,6 +182,15 @@ fun SessionDetailScreen(
                     )
                 }
 
+                if (!isLoading && !canPlay) {
+                    Text(
+                        text = "포인트가 1개뿐이어서 재생할 수 없습니다.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+
                 Slider(
                     value = if (isDragging) localDragProgress else displayProgress,
                     onValueChange = { fraction ->
@@ -198,6 +208,7 @@ fun SessionDetailScreen(
                             if (wasPlayingBeforeDrag) viewModel.play()
                         }
                     },
+                    enabled = canPlay,
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -209,6 +220,7 @@ fun SessionDetailScreen(
                 ) {
                     IconButton(
                         onClick = viewModel::reset,
+                        enabled = canPlay,
                         modifier = Modifier.weight(1f)
                     ) {
                         Icon(Icons.Default.Replay, contentDescription = "처음으로")
@@ -216,6 +228,7 @@ fun SessionDetailScreen(
 
                     FilledIconButton(
                         onClick = { if (isPlaying) viewModel.pause() else viewModel.play() },
+                        enabled = canPlay,
                         modifier = Modifier
                             .weight(1f)
                             .size(56.dp)
@@ -229,6 +242,7 @@ fun SessionDetailScreen(
 
                     TextButton(
                         onClick = viewModel::cycleSpeed,
+                        enabled = canPlay,
                         modifier = Modifier.weight(1f)
                     ) {
                         Text(

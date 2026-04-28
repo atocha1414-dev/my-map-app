@@ -73,6 +73,11 @@ class PlaybackViewModel(
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0L)
 
+    // 포인트가 2개 이상이어야 재생 가능 (1개면 시작·끝이 같아 재생 의미 없음)
+    val canPlay: StateFlow<Boolean> = _allPoints
+        .map { it.size >= 2 }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     private var playbackJob: Job? = null
     // 레이스 컨디션 방지: pause 후 즉시 play 시 이전 코루틴이 _isPlaying=false를 덮어쓰지 않도록
     private var playbackGeneration = 0
