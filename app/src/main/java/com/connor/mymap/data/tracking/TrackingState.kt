@@ -33,14 +33,25 @@ object TrackingState {
     }
 
     fun setTrackPoints(points: List<TrackingPoint>) {
-        _trackPoints.value = points
+        // 앱 재시작 시 복구: 최근 MAX_LIVE_POINTS개만 인메모리에 유지
+        _trackPoints.value = if (points.size <= MAX_LIVE_POINTS) points
+                             else points.takeLast(MAX_LIVE_POINTS)
     }
 
     fun addTrackPoint(point: TrackingPoint) {
-        _trackPoints.value = _trackPoints.value + point
+        val current = _trackPoints.value
+        // 인메모리 포인트는 최대 MAX_LIVE_POINTS개 (지도 렌더링용).
+        // 전체 데이터는 디스크(current_track.csv)에 스트리밍 보관 → 저장 시 손실 없음.
+        _trackPoints.value = if (current.size < MAX_LIVE_POINTS) {
+            current + point
+        } else {
+            current.drop(1) + point
+        }
     }
 
     fun clearTrackPoints() {
         _trackPoints.value = emptyList()
     }
+
+    const val MAX_LIVE_POINTS = 2_000
 }

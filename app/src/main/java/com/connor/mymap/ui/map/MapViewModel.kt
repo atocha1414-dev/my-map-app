@@ -255,14 +255,15 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
     fun onResetTrackingClick() {
         pendingTrackingStart = false
 
-        // 클리어 전에 현재 누적 데이터를 캡처해 히스토리에 남긴다.
         val startedAt = TrackingState.trackingStartedAtMillis.value
         val currentSessionDuration =
             if (TrackingState.isTracking.value && startedAt != null)
                 (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
             else 0L
         val totalDurationMillis = _pausedDurationMillis.value + currentSessionDuration
-        val pointsSnapshot = TrackingState.trackPoints.value
+        // 인메모리 포인트는 MAX_LIVE_POINTS로 캡이 걸려 있어 저장 여부 판단에만 사용.
+        // 실제 저장은 디스크에서 전체 포인트를 읽어 처리해 장시간 세션에서도 손실이 없다.
+        val hasAnyPoints = TrackingState.trackPoints.value.isNotEmpty()
 
         _isPaused.value = false
         _pausedDurationMillis.value = 0L
@@ -271,17 +272,19 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             var canClearCurrentTrack = true
             try {
-                // 의미 있는 기록만 저장: 10초 이상 진행했거나 GPS 포인트가 1개 이상.
-                if (totalDurationMillis >= MIN_SAVED_DURATION_MILLIS || pointsSnapshot.isNotEmpty()) {
+                if (totalDurationMillis >= MIN_SAVED_DURATION_MILLIS || hasAnyPoints) {
                     canClearCurrentTrack = false
+                    // 디스크에서 전체 포인트 읽기: 인메모리 캡(MAX_LIVE_POINTS)을 우회해
+                    // 장시간 트래킹 세션도 모든 포인트가 온전히 저장된다.
+                    val allPoints = trackingStorage.readPoints()
                     val endedAt = System.currentTimeMillis()
-                    val distance = TrackingCalculator.calculateStats(pointsSnapshot).distanceMeters
+                    val distance = TrackingCalculator.calculateStats(allPoints).distanceMeters
                     historyStorage.save(
                         startedAtMillis = (endedAt - totalDurationMillis).coerceAtLeast(0L),
                         endedAtMillis = endedAt,
                         durationMillis = totalDurationMillis,
                         distanceMeters = distance,
-                        points = pointsSnapshot
+                        points = allPoints
                     )
                     canClearCurrentTrack = true
                 }

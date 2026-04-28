@@ -32,10 +32,11 @@ class TrackingStorage(context: Context) {
     suspend fun readPoints(): List<TrackingPoint> = withContext(ioDispatcher) {
         runCatching {
             if (!trackFile.exists()) return@runCatching emptyList()
-
-            trackFile
-                .readLines()
-                .mapNotNull { line -> line.toTrackingPointOrNull() }
+            // readLines()는 파일 전체를 List<String>으로 메모리에 올림 → 대용량 파일에서 피크 메모리 2배.
+            // useLines는 한 줄씩 스트리밍 처리해 피크 메모리를 최소화한다.
+            trackFile.bufferedReader().useLines { lines ->
+                lines.mapNotNull { it.toTrackingPointOrNull() }.toList()
+            }
         }.getOrElse { e ->
             Logger.e(TAG, "Failed to read tracking points", e)
             emptyList()
