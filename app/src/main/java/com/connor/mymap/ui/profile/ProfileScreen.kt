@@ -16,19 +16,30 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.activity.compose.BackHandler
@@ -85,6 +96,7 @@ fun ProfileScreen(
             isLoading = isLoading,
             onCardClick = { viewModel.selectSession(it) },
             onDeleteSession = { viewModel.deleteSession(it) },
+            onDeleteSessions = { viewModel.deleteSessions(it) },
             loadThumbnailFile = { viewModel.getThumbnailFile(it) },
             loadPoints = { viewModel.loadPoints(it) }
         )
@@ -107,11 +119,20 @@ private fun SessionListContent(
     isLoading: Boolean,
     onCardClick: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
+    onDeleteSessions: (Set<String>) -> Unit,
     loadThumbnailFile: suspend (String) -> File?,
     loadPoints: suspend (String) -> List<TrackingPoint>
 ) {
     var pendingDeleteId by remember { mutableStateOf<String?>(null) }
+    var isEditMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(emptySet<String>()) }
+    var showBulkDeleteConfirm by remember { mutableStateOf(false) }
     val bgColor = MaterialTheme.colorScheme.background
+
+    BackHandler(enabled = isEditMode) {
+        isEditMode = false
+        selectedIds = emptySet()
+    }
 
     Box(
         modifier = Modifier
@@ -147,7 +168,7 @@ private fun SessionListContent(
                         top = 72.dp,
                         start = 16.dp,
                         end = 16.dp,
-                        bottom = 16.dp
+                        bottom = if (isEditMode) 80.dp else 16.dp
                     ),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
@@ -161,7 +182,15 @@ private fun SessionListContent(
                                 onCardClick = { onCardClick(session.id) },
                                 onDeleteClick = { pendingDeleteId = session.id },
                                 loadThumbnailFile = { loadThumbnailFile(session.id) },
-                                loadPoints = { loadPoints(session.id) }
+                                loadPoints = { loadPoints(session.id) },
+                                isEditMode = isEditMode,
+                                isSelected = session.id in selectedIds,
+                                onToggleSelect = {
+                                    selectedIds = if (session.id in selectedIds)
+                                        selectedIds - session.id
+                                    else
+                                        selectedIds + session.id
+                                }
                             )
                         }
                     }
@@ -169,7 +198,7 @@ private fun SessionListContent(
             }
         }
 
-        // 반투명 그라디언트 헤더 오버레이 — 아이템이 스크롤되어 올라올 때 뒤로 보인다.
+        // 반투명 그라디언트 헤더 오버레이
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -180,16 +209,91 @@ private fun SessionListContent(
                         1.0f to bgColor.copy(alpha = 0f)
                     )
                 )
-                .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 28.dp)
+                .padding(start = 16.dp, end = 8.dp, top = 16.dp, bottom = 28.dp)
         ) {
-            Text(
-                text = "이동 기록",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (isEditMode) {
+                    val allSelected = sessions.isNotEmpty() && selectedIds.size == sessions.size
+                    Checkbox(
+                        checked = allSelected,
+                        onCheckedChange = {
+                            selectedIds = if (allSelected) emptySet()
+                            else sessions.map { it.id }.toSet()
+                        }
+                    )
+                }
+                Text(
+                    text = when {
+                        !isEditMode -> "이동 기록"
+                        selectedIds.isEmpty() -> "항목 선택"
+                        else -> "${selectedIds.size}개 선택됨"
+                    },
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+                if (sessions.isNotEmpty()) {
+                    TextButton(onClick = {
+                        if (isEditMode) {
+                            isEditMode = false
+                            selectedIds = emptySet()
+                        } else {
+                            isEditMode = true
+                        }
+                    }) {
+                        Text(if (isEditMode) "완료" else "편집")
+                    }
+                }
+            }
+        }
+
+        // 편집 모드 하단 삭제 바
+        AnimatedVisibility(
+            visible = isEditMode,
+            enter = slideInVertically { it } + fadeIn(),
+            exit = slideOutVertically { it } + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 8.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (selectedIds.isEmpty()) "항목을 선택해주세요"
+                               else "${selectedIds.size}개 선택됨",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (selectedIds.isEmpty())
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.onSurface
+                    )
+                    Button(
+                        onClick = { showBulkDeleteConfirm = true },
+                        enabled = selectedIds.isNotEmpty(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        )
+                    ) {
+                        Text("삭제")
+                    }
+                }
+            }
         }
     }
 
+    // 단건 삭제 확인
     pendingDeleteId?.let { id ->
         AlertDialog(
             onDismissRequest = { pendingDeleteId = null },
@@ -203,6 +307,26 @@ private fun SessionListContent(
             },
             dismissButton = {
                 TextButton(onClick = { pendingDeleteId = null }) { Text("취소") }
+            }
+        )
+    }
+
+    // 일괄 삭제 확인
+    if (showBulkDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showBulkDeleteConfirm = false },
+            title = { Text("기록을 삭제할까요?") },
+            text = { Text("선택한 ${selectedIds.size}개의 이동 기록이 영구적으로 삭제됩니다.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDeleteSessions(selectedIds)
+                    showBulkDeleteConfirm = false
+                    isEditMode = false
+                    selectedIds = emptySet()
+                }) { Text("삭제", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBulkDeleteConfirm = false }) { Text("취소") }
             }
         )
     }
@@ -228,11 +352,17 @@ private fun SessionCard(
     onCardClick: () -> Unit,
     onDeleteClick: () -> Unit,
     loadThumbnailFile: suspend () -> File?,
-    loadPoints: suspend () -> List<TrackingPoint>
+    loadPoints: suspend () -> List<TrackingPoint>,
+    isEditMode: Boolean = false,
+    isSelected: Boolean = false,
+    onToggleSelect: () -> Unit = {}
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        onClick = onCardClick
+        onClick = if (isEditMode) onToggleSelect else onCardClick,
+        colors = if (isSelected)
+            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        else CardDefaults.cardColors()
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
@@ -253,11 +383,18 @@ private fun SessionCard(
                         text = formatDate(session.startedAtMillis),
                         style = MaterialTheme.typography.titleMedium
                     )
-                    IconButton(onClick = onDeleteClick) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "기록 삭제"
+                    if (isEditMode) {
+                        Checkbox(
+                            checked = isSelected,
+                            onCheckedChange = { onToggleSelect() }
                         )
+                    } else {
+                        IconButton(onClick = onDeleteClick) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "기록 삭제"
+                            )
+                        }
                     }
                 }
                 Spacer(Modifier.height(8.dp))

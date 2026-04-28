@@ -100,4 +100,18 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             }
         }
     }
+
+    fun deleteSessions(ids: Set<String>) {
+        viewModelScope.launch {
+            try {
+                ids.forEach { id ->
+                    historyStorage.delete(id)
+                    thumbnailStorage.delete(id)
+                }
+                _sessions.value = _sessions.value.filterNot { it.id in ids }
+            } catch (e: Exception) {
+                Logger.e(TAG, "Failed to delete tracking sessions", e)
+            }
+        }
+    }
 }
