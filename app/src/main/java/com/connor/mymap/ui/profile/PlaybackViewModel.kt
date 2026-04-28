@@ -112,7 +112,7 @@ class PlaybackViewModel(
             while (_isPlaying.value && _currentIndex.value < _allPoints.value.lastIndex) {
                 val pts = _allPoints.value
                 val idx = _currentIndex.value
-                val lastIdx = pts.lastIndex.toFloat()
+                val total = totalMs.value.toFloat()
 
                 val baseElapsed = pts[idx].timestampMillis - pts[0].timestampMillis
                 val targetElapsed = pts[idx + 1].timestampMillis - pts[0].timestampMillis
@@ -129,15 +129,16 @@ class PlaybackViewModel(
                     val wallDelta = (System.currentTimeMillis() - startWall).coerceAtLeast(0L)
                     if (wallDelta >= realDelayMs) break
                     val fraction = wallDelta.toFloat() / realDelayMs.toFloat()
-                    _displayElapsedMs.value = baseElapsed + (gapElapsed * fraction).toLong()
-                    // 슬라이더와 단위 일치: 인덱스 기반 비율로 표시
-                    _displayProgress.value = (idx + fraction) / lastIdx
+                    val elapsedMs = baseElapsed + (gapElapsed * fraction).toLong()
+                    _displayElapsedMs.value = elapsedMs
+                    // 시간 기반 비율: 경과시간 / 전체시간
+                    _displayProgress.value = if (total > 0f) elapsedMs.toFloat() / total else 0f
                     delay(DISPLAY_STEP_MS)
                 }
 
                 if (_isPlaying.value && _currentIndex.value == idx) {
                     _displayElapsedMs.value = targetElapsed
-                    _displayProgress.value = (idx + 1) / lastIdx
+                    _displayProgress.value = if (total > 0f) targetElapsed.toFloat() / total else 0f
                     _currentIndex.value = idx + 1
                 }
             }
@@ -162,11 +163,19 @@ class PlaybackViewModel(
     fun seekTo(fraction: Float) {
         val points = _allPoints.value
         if (points.isEmpty()) return
-        val newIndex = (fraction * points.lastIndex).toInt().coerceIn(0, points.lastIndex)
-        val elapsed = points[newIndex].timestampMillis - points[0].timestampMillis
+        val total = totalMs.value
+        if (total <= 0L) {
+            _displayProgress.value = fraction
+            return
+        }
+        // 시간 기반 탐색: fraction이 나타내는 목표 시간에 가장 가까운 포인트로 이동
+        val targetElapsed = (fraction * total).toLong()
+        val t0 = points.first().timestampMillis
+        val newIndex = points.indexOfLast { it.timestampMillis - t0 <= targetElapsed }
+            .coerceAtLeast(0)
         _currentIndex.value = newIndex
-        _displayElapsedMs.value = elapsed
-        // fraction을 그대로 사용해 슬라이더 위치와 일치시킴
+        // 슬라이더·시간 표시는 포인트에 스냅되지 않고 정확한 목표값 유지
+        _displayElapsedMs.value = targetElapsed
         _displayProgress.value = fraction
     }
 
