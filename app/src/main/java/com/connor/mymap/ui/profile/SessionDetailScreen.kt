@@ -48,11 +48,15 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.MutableCreationExtras
 import androidx.lifecycle.viewmodel.compose.viewModel
+import android.app.Application
 import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.ui.map.MapLibreView
 
@@ -65,6 +69,7 @@ fun SessionDetailScreen(
     // 변경 이유: 기본 viewModel()은 Activity의 ViewModelStore를 공유하므로
     // 사용자가 여러 세션을 차례로 보면 PlaybackViewModel이 store에 누적되어 메모리 누수.
     // 화면별 전용 ViewModelStore를 만들어 dispose 시 onCleared가 호출되게 한다.
+    val application = LocalContext.current.applicationContext as Application
     val owner = remember {
         object : ViewModelStoreOwner {
             override val viewModelStore: ViewModelStore = ViewModelStore()
@@ -74,9 +79,18 @@ fun SessionDetailScreen(
         onDispose { owner.viewModelStore.clear() }
     }
 
+    // 커스텀 owner는 HasDefaultViewModelProviderFactory가 아니라서
+    // factory가 사용하는 APPLICATION_KEY를 직접 extras에 넣어줘야 한다.
+    val extras = remember(application) {
+        MutableCreationExtras().apply {
+            set(ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY, application)
+        }
+    }
+
     val viewModel: PlaybackViewModel = viewModel(
         viewModelStoreOwner = owner,
-        factory = PlaybackViewModel.factory(sessionId)
+        factory = PlaybackViewModel.factory(sessionId),
+        extras = extras
     )
 
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
