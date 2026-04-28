@@ -82,7 +82,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -92,6 +91,7 @@ fun ProfileScreen(
     viewModel: ProfileViewModel = viewModel()
 ) {
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
+    val sessionGroups by viewModel.sessionGroups.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val selectedSessionId by viewModel.selectedSessionId.collectAsStateWithLifecycle()
 
@@ -102,6 +102,7 @@ fun ProfileScreen(
     Box(modifier = modifier.fillMaxSize()) {
         SessionListContent(
             sessions = sessions,
+            sessionGroups = sessionGroups,
             isLoading = isLoading,
             onCardClick = { viewModel.selectSession(it) },
             onDeleteSession = { viewModel.deleteSession(it) },
@@ -125,6 +126,7 @@ fun ProfileScreen(
 @Composable
 private fun SessionListContent(
     sessions: List<TrackingSession>,
+    sessionGroups: List<SessionGroup>,
     isLoading: Boolean,
     onCardClick: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
@@ -165,13 +167,6 @@ private fun SessionListContent(
                 }
             }
             else -> {
-                val groupedSessions = remember(sessions) {
-                    sessions
-                        .sortedByDescending { it.startedAtMillis }
-                        .groupBy { formatSectionDate(it.startedAtMillis) }
-                        .entries.toList()
-                }
-
                 if (viewMode == ViewMode.List) {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
@@ -183,11 +178,11 @@ private fun SessionListContent(
                         ),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        groupedSessions.forEach { (dateLabel, daySessions) ->
-                            stickyHeader(key = "header_$dateLabel") {
-                                DateSectionHeader(label = dateLabel, bgColor = bgColor)
+                        sessionGroups.forEach { group ->
+                            stickyHeader(key = "header_${group.label}") {
+                                DateSectionHeader(label = group.label, bgColor = bgColor)
                             }
-                            items(daySessions, key = { it.id }) { session ->
+                            items(group.sessions, key = { it.id }) { session ->
                                 SessionCard(
                                     session = session,
                                     onCardClick = { onCardClick(session.id) },
@@ -219,11 +214,11 @@ private fun SessionListContent(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        groupedSessions.forEach { (dateLabel, daySessions) ->
+                        sessionGroups.forEach { group ->
                             item(span = { GridItemSpan(maxLineSpan) }) {
-                                DateSectionHeader(label = dateLabel, bgColor = bgColor)
+                                DateSectionHeader(label = group.label, bgColor = bgColor)
                             }
-                            gridItems(daySessions, key = { it.id }) { session ->
+                            gridItems(group.sessions, key = { it.id }) { session ->
                                 ThumbnailGridItem(
                                     session = session,
                                     onCardClick = { onCardClick(session.id) },
@@ -653,24 +648,6 @@ private fun Stat(label: String, value: String) {
 }
 
 private enum class ViewMode { List, Grid }
-
-private fun formatSectionDate(millis: Long): String {
-    fun dayStart(ms: Long) = Calendar.getInstance().apply {
-        timeInMillis = ms
-        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-    }.timeInMillis
-
-    val today = dayStart(System.currentTimeMillis())
-    val sessionDay = dayStart(millis)
-    val diffDays = (today - sessionDay) / (24 * 60 * 60 * 1000)
-
-    return when (diffDays) {
-        0L -> "오늘"
-        1L -> "어제"
-        else -> SimpleDateFormat("yyyy년 M월 d일", Locale.KOREA).format(Date(millis))
-    }
-}
 
 private fun formatDate(millis: Long): String =
     SimpleDateFormat("yyyy.MM.dd HH:mm", Locale.KOREA).format(Date(millis))
