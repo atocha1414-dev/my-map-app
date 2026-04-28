@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.PaddingValues
@@ -61,6 +62,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -98,6 +100,7 @@ fun ProfileScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SessionListContent(
     sessions: List<TrackingSession>,
@@ -131,8 +134,13 @@ private fun SessionListContent(
                 }
             }
             else -> {
-                // LazyColumn이 헤더 뒤까지 올라오도록 전체 영역을 채운다.
-                // contentPadding top으로 첫 아이템이 헤더 아래에서 시작하게 한다.
+                val groupedSessions = remember(sessions) {
+                    sessions
+                        .sortedByDescending { it.startedAtMillis }
+                        .groupBy { formatSectionDate(it.startedAtMillis) }
+                        .entries.toList()
+                }
+
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
@@ -143,14 +151,19 @@ private fun SessionListContent(
                     ),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(sessions, key = { it.id }) { session ->
-                        SessionCard(
-                            session = session,
-                            onCardClick = { onCardClick(session.id) },
-                            onDeleteClick = { pendingDeleteId = session.id },
-                            loadThumbnailFile = { loadThumbnailFile(session.id) },
-                            loadPoints = { loadPoints(session.id) }
-                        )
+                    groupedSessions.forEach { (dateLabel, daySessions) ->
+                        stickyHeader(key = "header_$dateLabel") {
+                            DateSectionHeader(label = dateLabel, bgColor = bgColor)
+                        }
+                        items(daySessions, key = { it.id }) { session ->
+                            SessionCard(
+                                session = session,
+                                onCardClick = { onCardClick(session.id) },
+                                onDeleteClick = { pendingDeleteId = session.id },
+                                loadThumbnailFile = { loadThumbnailFile(session.id) },
+                                loadPoints = { loadPoints(session.id) }
+                            )
+                        }
                     }
                 }
             }
@@ -193,6 +206,20 @@ private fun SessionListContent(
             }
         )
     }
+}
+
+@Composable
+private fun DateSectionHeader(label: String, bgColor: androidx.compose.ui.graphics.Color) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(bgColor)
+            .padding(top = 8.dp, bottom = 6.dp)
+    )
 }
 
 @Composable
@@ -370,6 +397,24 @@ private fun Stat(label: String, value: String) {
             text = value,
             style = MaterialTheme.typography.bodyLarge
         )
+    }
+}
+
+private fun formatSectionDate(millis: Long): String {
+    fun dayStart(ms: Long) = Calendar.getInstance().apply {
+        timeInMillis = ms
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+
+    val today = dayStart(System.currentTimeMillis())
+    val sessionDay = dayStart(millis)
+    val diffDays = (today - sessionDay) / (24 * 60 * 60 * 1000)
+
+    return when (diffDays) {
+        0L -> "오늘"
+        1L -> "어제"
+        else -> SimpleDateFormat("yyyy년 M월 d일", Locale.KOREA).format(Date(millis))
     }
 }
 
