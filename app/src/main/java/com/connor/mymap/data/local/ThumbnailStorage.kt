@@ -29,6 +29,30 @@ class ThumbnailStorage(context: Context) {
         }
     }
 
+    fun sizeBytes(sessionId: String): Long {
+        return runCatching {
+            val f = getFile(sessionId)
+            if (f.exists()) f.length() else 0L
+        }.getOrElse { e ->
+            Logger.e(TAG, "Failed to read thumbnail size $sessionId", e)
+            0L
+        }
+    }
+
+    fun deleteOrphanedExcept(validSessionIds: Set<String>): Int {
+        return runCatching {
+            if (!dir.exists()) return@runCatching 0
+            dir.listFiles { _, name -> name.endsWith(EXTENSION) }
+                ?.count { file ->
+                    file.nameWithoutExtension !in validSessionIds && file.delete()
+                }
+                ?: 0
+        }.getOrElse { e ->
+            Logger.e(TAG, "Failed to delete orphaned thumbnails", e)
+            0
+        }
+    }
+
     companion object {
         private const val TAG = "ThumbnailStorage"
         private const val DIR_NAME = "thumbnails"

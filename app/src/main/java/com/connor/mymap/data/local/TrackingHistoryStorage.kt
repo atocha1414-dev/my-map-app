@@ -20,6 +20,12 @@ class TrackingHistoryStorage(context: Context) {
 
     private val historyDir = File(context.applicationContext.filesDir, HISTORY_DIR_NAME)
 
+    data class HistoryFileInfo(
+        val id: String,
+        val endedAtMillis: Long,
+        val sizeBytes: Long
+    )
+
     suspend fun save(
         startedAtMillis: Long,
         endedAtMillis: Long,
@@ -60,6 +66,26 @@ class TrackingHistoryStorage(context: Context) {
             ?: emptyList()
     }
 
+    /**
+     * 첫 화면 체감 속도를 위해 최근 N개 세션만 우선 조회한다.
+     * 파일명을 endedAtMillis로 저장하고 있으므로, 파일명 기준 정렬 후 상위 N개만 META를 읽는다.
+     */
+    suspend fun listRecent(limit: Int): List<TrackingSession> = withContext(ioDispatcher) {
+        if (!historyDir.exists() || limit <= 0) return@withContext emptyList()
+
+        historyDir.listFiles { _, name -> name.endsWith(FILE_EXTENSION) }
+            ?.asSequence()
+            ?.sortedWith(
+                compareByDescending<File> { it.nameWithoutExtension.toLongOrNull() ?: Long.MIN_VALUE }
+                    .thenByDescending { it.lastModified() }
+            )
+            ?.take(limit)
+            ?.mapNotNull { readMeta(it) }
+            ?.sortedByDescending { it.endedAtMillis }
+            ?.toList()
+            ?: emptyList()
+    }
+
     suspend fun loadPoints(id: String, maxPoints: Int = MAX_RENDER_POINTS): List<TrackingPoint> =
         withContext(ioDispatcher) {
             val file = File(historyDir, "$id$FILE_EXTENSION")
@@ -94,6 +120,34 @@ class TrackingHistoryStorage(context: Context) {
 
     suspend fun delete(id: String) = withContext(ioDispatcher) {
         File(historyDir, "$id$FILE_EXTENSION").takeIf { it.exists() }?.delete()
+    }
+
+    /**
+     * 보존 정책 계산용 파일 메타 목록.
+     * 파일명(id)이 endedAtMillis 규칙을 따르므로 숫자 파싱을 우선 사용한다.
+     */
+    suspend fun listFileInfos(): List<HistoryFileInfo> = withContext(ioDispatcher) {
+        if (!historyDir.exists()) return@withContext emptyList()
+
+        historyDir.listFiles { _, name -> name.endsWith(FILE_EXTENSION) }
+            ?.mapNotNull { file ->
+                val id = file.nameWithoutExtension
+                val endedAtMillis = id.toLongOrNull() ?: readMeta(file)?.endedAtMillis ?: return@mapNotNull null
+                HistoryFileInfo(
+                    id = id,
+                    endedAtMillis = endedAtMillis,
+                    sizeBytes = file.length()
+                )
+            }
+            ?.sortedByDescending { it.endedAtMillis }
+            ?: emptyList()
+    }
+
+    suspend fun deleteMany(ids: Set<String>): Int = withContext(ioDispatcher) {
+        ids.count { id ->
+            val file = File(historyDir, "$id$FILE_EXTENSION")
+            file.exists() && file.delete()
+        }
     }
 
     private fun readMeta(file: File): TrackingSession? {

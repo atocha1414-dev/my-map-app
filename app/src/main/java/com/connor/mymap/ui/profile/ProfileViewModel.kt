@@ -11,14 +11,11 @@ import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.domain.model.TrackingSession
 import com.connor.mymap.util.Constants
 import com.connor.mymap.util.Logger
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -30,6 +27,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
 
     companion object {
         private const val TAG = "ProfileViewModel"
+        private const val INITIAL_PREVIEW_COUNT = 60
     }
 
     private val historyStorage = TrackingHistoryStorage(application)
@@ -50,22 +48,15 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     private val _sessions = MutableStateFlow<List<TrackingSession>>(emptyList())
     val sessions: StateFlow<List<TrackingSession>> = _sessions.asStateFlow()
 
-    /**
-     * 날짜별로 그룹핑된 세션 목록.
-     * 변경 이유: 세션이 수천 개 쌓이면 ProfileScreen의 remember{...} 블록에서
-     * Calendar/SimpleDateFormat을 매 세션마다 생성하면서 메인 스레드가 막혀 ANR 위험이 있다.
-     * 그룹핑을 Default 디스패처에서 수행하고, Calendar/포매터를 1회만 생성해 재사용한다.
-     */
-    val sessionGroups: StateFlow<List<SessionGroup>> = _sessions
-        .map { groupSessionsByDate(it) }
-        .flowOn(Dispatchers.Default)
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    private val _sessionGroups = MutableStateFlow<List<SessionGroup>>(emptyList())
+    val sessionGroups: StateFlow<List<SessionGroup>> = _sessionGroups.asStateFlow()
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     private val _selectedSessionId = MutableStateFlow<String?>(null)
     val selectedSessionId: StateFlow<String?> = _selectedSessionId.asStateFlow()
+    private var refreshJob: Job? = null
 
     fun selectSession(id: String) { _selectedSessionId.value = id }
     fun clearSelection() { _selectedSessionId.value = null }
@@ -75,10 +66,26 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun refresh() {
-        viewModelScope.launch {
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
             _isLoading.value = true
             try {
-                _sessions.value = historyStorage.list()
+                // 변경 이유: 첫 진입에서는 전체 파일을 전부 열기 전에 최근 N개만 먼저 보여줘
+                // 로딩 스피너 체류 시간을 줄이고 목록을 빠르게 표시한다.
+                if (_sessions.value.isEmpty()) {
+                    val recent = historyStorage.listRecent(INITIAL_PREVIEW_COUNT)
+                    if (recent.isNotEmpty()) {
+                        _sessions.value = recent
+                        _sessionGroups.value = groupSessionsByDate(recent)
+                        _isLoading.value = false
+                    }
+                }
+
+                val full = historyStorage.list()
+                _sessions.value = full
+                _sessionGroups.value = groupSessionsByDate(full)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Logger.e(TAG, "Failed to load tracking history", e)
             } finally {
@@ -100,13 +107,29 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
      * 이미 있으면 그대로, 없으면 즉시 생성. 지도 파일이 없거나 생성 실패 시 null.
      * null이면 호출부에서 경로 라인만 그리는 폴백으로 떨어진다.
      */
-    suspend fun getThumbnailFile(id: String): File? {
+    suspend fun getThumbnailFileIfExists(id: String): File? =
+        try {
+            if (thumbnailStorage.exists(id)) thumbnailStorage.getFile(id) else null
+        } catch (e: Exception) {
+            Logger.e(TAG, "Failed to check thumbnail existence", e)
+            null
+        }
+
+    /**
+     * 변경 이유: 첫 진입에서 썸네일 생성이 Mutex로 직렬화될 때도
+     * UI는 폴백(경로 라인)을 먼저 보여줄 수 있게 생성 API를 분리해둔다.
+     */
+    suspend fun ensureThumbnailFile(id: String, points: List<TrackingPoint>): File? {
         if (thumbnailStorage.exists(id)) return thumbnailStorage.getFile(id)
+        if (points.isEmpty()) return null
 
         val generator = thumbnailGenerator ?: return null
-        val points = loadPoints(id)
-        if (points.isEmpty()) return null
         return generator.generate(id, points)
+    }
+
+    suspend fun getThumbnailFile(id: String): File? {
+        val points = loadPoints(id)
+        return ensureThumbnailFile(id, points)
     }
 
     fun deleteSession(id: String) {
@@ -115,6 +138,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                 historyStorage.delete(id)
                 thumbnailStorage.delete(id)
                 _sessions.value = _sessions.value.filterNot { it.id == id }
+                _sessionGroups.value = removeSessionsFromGroups(_sessionGroups.value, setOf(id))
             } catch (e: Exception) {
                 Logger.e(TAG, "Failed to delete tracking session", e)
             }
@@ -129,6 +153,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                     thumbnailStorage.delete(id)
                 }
                 _sessions.value = _sessions.value.filterNot { it.id in ids }
+                _sessionGroups.value = removeSessionsFromGroups(_sessionGroups.value, ids)
             } catch (e: Exception) {
                 Logger.e(TAG, "Failed to delete tracking sessions", e)
             }
@@ -161,6 +186,22 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
             .map { (label, items) -> SessionGroup(label, items) }
+    }
+
+    /**
+     * 변경 이유: 단건/소량 삭제마다 전체 세션을 다시 날짜 그룹핑하지 않고,
+     * 기존 그룹에서 삭제 대상만 빼서 증분 갱신한다.
+     */
+    private fun removeSessionsFromGroups(
+        groups: List<SessionGroup>,
+        ids: Set<String>
+    ): List<SessionGroup> {
+        if (groups.isEmpty() || ids.isEmpty()) return groups
+
+        return groups.mapNotNull { group ->
+            val remaining = group.sessions.filterNot { it.id in ids }
+            if (remaining.isEmpty()) null else group.copy(sessions = remaining)
+        }
     }
 }
 

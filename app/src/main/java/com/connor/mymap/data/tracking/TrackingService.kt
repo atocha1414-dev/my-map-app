@@ -10,6 +10,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.Location
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -31,12 +32,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 class TrackingService : Service() {
 
     private lateinit var fusedClient: FusedLocationProviderClient
     private lateinit var trackingStorage: TrackingStorage
+    private lateinit var notificationManager: NotificationManager
     @Volatile
     private var lastAcceptedPoint: TrackingPoint? = null
     // 변경 이유: serviceScope.launch(Dispatchers.Default)에서 쓰고
@@ -48,6 +52,13 @@ class TrackingService : Service() {
     @Volatile
     private var isLocationUpdatesRegistered = false
     private var startJob: Job? = null
+    private var notificationTickerJob: Job? = null
+    @Volatile
+    private var trackingStartedAtMillis: Long = 0L
+    @Volatile
+    private var totalDistanceMeters: Float = 0f
+    @Volatile
+    private var tickerFrameIndex: Int = 0
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -67,11 +78,17 @@ class TrackingService : Service() {
                     return@forEach
                 }
 
+                val previous = lastAcceptedPoint
+                if (previous != null && previous.segmentIndex == point.segmentIndex) {
+                    totalDistanceMeters += distanceBetween(previous, point)
+                }
+
                 lastAcceptedPoint = point
                 TrackingState.addTrackPoint(point)
                 serviceScope.launch {
                     trackingStorage.appendPoint(point)
                 }
+                updateForegroundNotification()
                 Logger.d(TAG, "Track point saved, accuracy=${point.accuracy}m")
             }
         }
@@ -81,6 +98,7 @@ class TrackingService : Service() {
         super.onCreate()
         fusedClient = LocationServices.getFusedLocationProviderClient(this)
         trackingStorage = TrackingStorage(this)
+        notificationManager = getSystemService(NotificationManager::class.java)
         createNotificationChannel()
     }
 
@@ -96,6 +114,8 @@ class TrackingService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        notificationTickerJob?.cancel()
+        notificationTickerJob = null
         fusedClient.removeLocationUpdates(locationCallback)
         isLocationUpdatesRegistered = false
         isStartingTracking = false
@@ -119,7 +139,13 @@ class TrackingService : Service() {
 
         // 정책 반영: 백그라운드 경로 기록은 사용자가 명시적으로 시작한 경우에만
         // ForegroundService로 실행하고, 추적 중임을 고정 알림으로 계속 표시한다.
-        startForeground(NOTIFICATION_ID, buildNotification())
+        startForeground(
+            NOTIFICATION_ID,
+            buildNotification(
+                tickerText = buildTickerText(0L),
+                statusText = "서비스 시작 중..."
+            )
+        )
         isStartingTracking = true
 
         startJob = serviceScope.launch {
@@ -135,6 +161,7 @@ class TrackingService : Service() {
                     Logger.d(TAG, "Resuming existing tracking session")
                 }
 
+                trackingStartedAtMillis = startedAt
                 val lastPoint = trackingStorage.readLastPoint()
                 activeSegmentIndex = if (resumedStart != null) {
                     lastPoint?.segmentIndex ?: 0
@@ -143,6 +170,16 @@ class TrackingService : Service() {
                 }
                 TrackingState.startTracking(startedAt)
                 lastAcceptedPoint = if (resumedStart != null) lastPoint else null
+
+                totalDistanceMeters = if (resumedStart != null) {
+                    val existingPoints = trackingStorage.readPoints()
+                    TrackingCalculator.calculateStats(existingPoints).distanceMeters
+                } else {
+                    0f
+                }
+                tickerFrameIndex = 0
+                startNotificationTicker()
+                updateForegroundNotification()
 
                 val request = LocationRequest.Builder(
                     Priority.PRIORITY_HIGH_ACCURACY,
@@ -169,6 +206,8 @@ class TrackingService : Service() {
 
     private fun stopTracking() {
         startJob?.cancel()
+        notificationTickerJob?.cancel()
+        notificationTickerJob = null
         fusedClient.removeLocationUpdates(locationCallback)
         isLocationUpdatesRegistered = false
         isStartingTracking = false
@@ -184,6 +223,73 @@ class TrackingService : Service() {
         }
     }
 
+    private fun startNotificationTicker() {
+        notificationTickerJob?.cancel()
+        notificationTickerJob = serviceScope.launch {
+            while (isLocationUpdatesRegistered || isStartingTracking) {
+                updateForegroundNotification()
+                delay(NOTIFICATION_UPDATE_INTERVAL_MILLIS)
+            }
+        }
+    }
+
+    private fun updateForegroundNotification() {
+        val startedAt = trackingStartedAtMillis
+        if (startedAt <= 0L) return
+        val elapsedMillis = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
+        val tickerText = buildTickerText(elapsedMillis)
+        val statusText = if (isLocationUpdatesRegistered) {
+            "서비스 실행 중 · [기록 중지] 버튼으로 종료"
+        } else {
+            "서비스 시작 중..."
+        }
+        notificationManager.notify(
+            NOTIFICATION_ID,
+            buildNotification(
+                tickerText = tickerText,
+                statusText = statusText
+            )
+        )
+    }
+
+    private fun buildTickerText(elapsedMillis: Long): String {
+        val frame = TAXI_FRAMES[tickerFrameIndex % TAXI_FRAMES.size]
+        tickerFrameIndex = (tickerFrameIndex + 1) % TAXI_FRAMES.size
+        return "$frame ${formatDistance(totalDistanceMeters)} · ${formatDuration(elapsedMillis)}"
+    }
+
+    private fun formatDistance(distanceMeters: Float): String {
+        return if (distanceMeters >= 1_000f) {
+            String.format(Locale.KOREA, "%.2fkm", distanceMeters / 1_000f)
+        } else {
+            "${distanceMeters.toInt()}m"
+        }
+    }
+
+    private fun formatDuration(durationMillis: Long): String {
+        val totalSeconds = durationMillis / 1_000L
+        val hours = totalSeconds / 3_600L
+        val minutes = (totalSeconds % 3_600L) / 60L
+        val seconds = totalSeconds % 60L
+        return if (hours > 0L) {
+            String.format(Locale.KOREA, "%d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            String.format(Locale.KOREA, "%02d:%02d", minutes, seconds)
+        }
+    }
+
+    private fun distanceBetween(from: TrackingPoint, to: TrackingPoint): Float {
+        val results = FloatArray(1)
+        Location.distanceBetween(
+            from.latitude,
+            from.longitude,
+            to.latitude,
+            to.longitude,
+            results
+        )
+        return results[0]
+    }
+
     private fun hasFineLocationPermission(): Boolean {
         return ContextCompat.checkSelfPermission(
             this,
@@ -191,7 +297,10 @@ class TrackingService : Service() {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun buildNotification(): Notification {
+    private fun buildNotification(
+        tickerText: String,
+        statusText: String
+    ): Notification {
         val openIntent = Intent(this, MainActivity::class.java)
         val openPendingIntent = PendingIntent.getActivity(
             this,
@@ -212,8 +321,9 @@ class TrackingService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification_tracking)
-            .setContentTitle("MyMap 이동 경로 기록 중")
-            .setContentText("앱이 닫혀 있어도 현재 위치를 기기 안에 저장합니다.")
+            // 요청 반영: 윗줄(Title)에 애니메이션/거리/시간, 아랫줄(Text)에 서비스 상태를 배치
+            .setContentTitle(tickerText)
+            .setContentText(statusText)
             .setContentIntent(openPendingIntent)
             .setOngoing(true)
             .addAction(R.drawable.ic_notification_tracking, "기록 중지", stopPendingIntent)
@@ -239,9 +349,11 @@ class TrackingService : Service() {
         private const val TAG = "TrackingService"
         private const val CHANNEL_ID = "tracking_channel"
         private const val NOTIFICATION_ID = 1001
+        private const val NOTIFICATION_UPDATE_INTERVAL_MILLIS = 1_000L
         private const val LOCATION_INTERVAL_MILLIS = 5_000L
         private const val FASTEST_LOCATION_INTERVAL_MILLIS = 2_000L
         private const val MIN_DISTANCE_METERS = 5f
+        private val TAXI_FRAMES = listOf("🚕·", "🚕··", "🚕···", "🚕··")
 
         const val ACTION_STOP = "com.connor.mymap.action.STOP_TRACKING"
 

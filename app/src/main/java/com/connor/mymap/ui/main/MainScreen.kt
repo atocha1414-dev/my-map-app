@@ -32,23 +32,33 @@ import com.connor.mymap.ui.profile.ProfileScreen
  * 홈(지도)과 프로필(이동 기록 목록)을 하단 네비로 묶는 메인 셸.
  * MapScreen은 AndroidView(MapLibre)를 포함하므로 탭 전환 시 컴포지션에서 제거되면
  * 카메라 위치·레이어·포인터가 모두 초기화된다.
- * → Box 안에 항상 유지하고 alpha로만 표시/숨김 처리한다.
+ * → 기본적으로는 Box 안에 유지하고 alpha로만 표시/숨김 처리한다.
+ * 단, 프로필 상세 재생 화면이 열려 두 번째 MapLibreView가 생기는 순간에는
+ * 홈 지도를 잠시 언마운트해 네이티브 메모리 급증을 막는다.
  */
 @Composable
 fun MainScreen() {
     var selectedTab by rememberSaveable { mutableStateOf(MainTab.Home) }
     // 지도 단일 탭으로 토글되는 몰입 모드 — 탭바·트래킹 패널·FAB 모두 숨김
     var isImmersive by rememberSaveable { mutableStateOf(false) }
+    var isProfileDetailVisible by rememberSaveable { mutableStateOf(false) }
+    var isProfileDetailImmersive by rememberSaveable { mutableStateOf(false) }
 
     // 프로필 탭으로 이동하면 몰입 모드를 해제한다(프로필에서 탭바가 보여야 다시 홈으로 갈 수 있다).
     LaunchedEffect(selectedTab) {
         if (selectedTab != MainTab.Home) isImmersive = false
+        if (selectedTab != MainTab.Profile) {
+            isProfileDetailVisible = false
+            isProfileDetailImmersive = false
+        }
     }
+
+    val shouldHideBottomBar = isImmersive || (selectedTab == MainTab.Profile && isProfileDetailImmersive)
 
     Scaffold(
         bottomBar = {
             AnimatedVisibility(
-                visible = !isImmersive,
+                visible = !shouldHideBottomBar,
                 enter = slideInVertically { it } + fadeIn(),
                 exit = slideOutVertically { it } + fadeOut()
             ) {
@@ -71,17 +81,31 @@ fun MainScreen() {
             .fillMaxSize()
             .padding(bottom = padding.calculateBottomPadding())
         ) {
-            // MapScreen은 항상 컴포지션에 유지 — AndroidView 인스턴스(지도 상태)를 보존한다.
-            MapScreen(
-                isImmersive = isImmersive,
-                onMapTap = { isImmersive = !isImmersive },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = if (selectedTab == MainTab.Home) 1f else 0f }
-            )
+            val keepHomeMapComposed = !(selectedTab == MainTab.Profile && isProfileDetailVisible)
+
+            // 변경 이유: 프로필 상세 재생 화면(SessionDetailScreen)도 MapLibreView를 사용하므로,
+            // 그 순간 홈 MapLibreView까지 유지하면 네이티브 메모리가 2배 가까이 튈 수 있다.
+            // 상세 노출 중에는 홈 지도를 잠시 언마운트해 동시 2개 인스턴스를 피한다.
+            if (keepHomeMapComposed) {
+                MapScreen(
+                    isImmersive = isImmersive,
+                    onMapTap = { isImmersive = !isImmersive },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = if (selectedTab == MainTab.Home) 1f else 0f }
+                )
+            }
             // ProfileScreen은 상태가 ViewModel/스토리지에 있으므로 재생성해도 무방하다.
             if (selectedTab == MainTab.Profile) {
-                ProfileScreen(modifier = Modifier.fillMaxSize())
+                ProfileScreen(
+                    modifier = Modifier.fillMaxSize(),
+                    onSessionDetailVisibleChange = { isVisible ->
+                        isProfileDetailVisible = isVisible
+                    },
+                    onSessionDetailImmersiveChange = { isImmersiveInDetail ->
+                        isProfileDetailImmersive = isImmersiveInDetail
+                    },
+                )
             }
         }
     }

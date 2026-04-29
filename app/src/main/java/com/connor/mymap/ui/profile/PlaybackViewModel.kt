@@ -191,6 +191,16 @@ class PlaybackViewModel(
             5f -> 10f
             else -> 1f
         }
+
+        // 변경 이유: 기존 구현은 속도 변경 시 현재 포인트 구간(realDelay)이 고정되어
+        // 다음 포인트로 넘어가야 체감 속도가 바뀌었다.
+        // 재생 중에는 코루틴을 현재 지점에서 즉시 재시작해 변경 속도를 바로 반영한다.
+        if (_isPlaying.value) {
+            playbackGeneration++
+            playbackJob?.cancel()
+            _isPlaying.value = false
+            play()
+        }
     }
 
     private fun computeBounds(points: List<TrackingPoint>): LatLngBounds {

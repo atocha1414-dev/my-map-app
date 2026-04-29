@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.connor.mymap.data.local.MapFileStorage
+import com.connor.mymap.data.local.ThumbnailStorage
 import com.connor.mymap.data.local.TrackingHistoryStorage
 import com.connor.mymap.data.local.TrackingStorage
 import com.connor.mymap.data.remote.LocationProvider
@@ -17,10 +18,13 @@ import com.connor.mymap.domain.repository.MapRepository
 import com.connor.mymap.util.Logger
 import com.connor.mymap.util.PermissionHelper
 import com.connor.mymap.util.TrackingCalculator
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.Calendar
 
 /**
  * 위치 권한 상태
@@ -49,6 +53,9 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
         // 세션 마커만 남는 경우가 있다. 마지막 포인트 시각으로부터 이 시간이 지나면
         // "어제 세션을 오늘 이어 그리는" 좀비 상태로 보고 끊는다.
         private const val STALE_SESSION_THRESHOLD_MILLIS = 30L * 60L * 1000L
+        // 보존 정책: 너무 오래된 기록은 자동 정리하고, 총 용량은 상한을 넘지 않게 유지한다.
+        private const val HISTORY_RETENTION_MONTHS = 6
+        private const val HISTORY_STORAGE_LIMIT_BYTES = 300L * 1024L * 1024L // 300MB
     }
 
     private val fileStorage = MapFileStorage(application)
@@ -57,6 +64,7 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
     private val locationProvider = LocationProvider(application)
     private val trackingStorage = TrackingStorage(application)
     private val historyStorage = TrackingHistoryStorage(application)
+    private val thumbnailStorage = ThumbnailStorage(application)
 
     val mapFilePath: String? = repository.getLocalMapPath()
 
@@ -118,6 +126,9 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }
+
+            runCatching { enforceHistoryRetentionPolicy() }
+                .onFailure { e -> Logger.e(TAG, "Failed to enforce retention policy on startup", e) }
         }
         Logger.d(TAG, "MapViewModel initialized, mapFilePath: $mapFilePath")
     }
@@ -286,6 +297,7 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
                         distanceMeters = distance,
                         points = allPoints
                     )
+                    enforceHistoryRetentionPolicy()
                     canClearCurrentTrack = true
                 }
             } catch (e: Exception) {
@@ -330,8 +342,68 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
                 distanceMeters = distance,
                 points = points
             )
+            enforceHistoryRetentionPolicy()
         } catch (e: Exception) {
             Logger.e(TAG, "Failed to archive stale tracking session", e)
+        }
+    }
+
+    /**
+     * 기록 보존 정책:
+     * 1) N개월 초과 세션 우선 삭제
+     * 2) 남은 데이터가 용량 상한을 넘으면 오래된 세션부터 추가 삭제
+     * 3) orphan 썸네일(원본 세션이 없는 PNG) 정리
+     */
+    private suspend fun enforceHistoryRetentionPolicy() = withContext(Dispatchers.IO) {
+        val allInfos = historyStorage.listFileInfos()
+        if (allInfos.isEmpty()) {
+            val deletedOrphans = thumbnailStorage.deleteOrphanedExcept(emptySet())
+            if (deletedOrphans > 0) {
+                Logger.i(TAG, "Retention cleanup deleted orphan thumbnails=$deletedOrphans")
+            }
+            return@withContext
+        }
+
+        val cutoffMillis = Calendar.getInstance().apply {
+            add(Calendar.MONTH, -HISTORY_RETENTION_MONTHS)
+        }.timeInMillis
+
+        val deleteIds = linkedSetOf<String>()
+        allInfos.asSequence()
+            .filter { it.endedAtMillis < cutoffMillis }
+            .map { it.id }
+            .forEach { id -> deleteIds += id }
+
+        val remainingInfos = allInfos.filterNot { it.id in deleteIds }
+        var totalBytes = remainingInfos.sumOf { info ->
+            info.sizeBytes + thumbnailStorage.sizeBytes(info.id)
+        }
+
+        if (totalBytes > HISTORY_STORAGE_LIMIT_BYTES) {
+            for (info in remainingInfos.sortedBy { it.endedAtMillis }) {
+                if (totalBytes <= HISTORY_STORAGE_LIMIT_BYTES) break
+                if (deleteIds.add(info.id)) {
+                    totalBytes -= (info.sizeBytes + thumbnailStorage.sizeBytes(info.id))
+                }
+            }
+        }
+
+        if (deleteIds.isNotEmpty()) {
+            val deletedHistoryCount = historyStorage.deleteMany(deleteIds)
+            val deletedThumbCount = deleteIds.count { id -> thumbnailStorage.delete(id) }
+            Logger.i(
+                TAG,
+                "Retention cleanup deleted sessions=$deletedHistoryCount, thumbnails=$deletedThumbCount"
+            )
+        }
+
+        val validIds = allInfos.asSequence()
+            .map { it.id }
+            .filterNot { it in deleteIds }
+            .toSet()
+        val deletedOrphans = thumbnailStorage.deleteOrphanedExcept(validIds)
+        if (deletedOrphans > 0) {
+            Logger.i(TAG, "Retention cleanup deleted orphan thumbnails=$deletedOrphans")
         }
     }
 

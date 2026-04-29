@@ -51,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -88,6 +89,8 @@ import java.util.Locale
 @Composable
 fun ProfileScreen(
     modifier: Modifier = Modifier,
+    onSessionDetailVisibleChange: (Boolean) -> Unit = {},
+    onSessionDetailImmersiveChange: (Boolean) -> Unit = {},
     viewModel: ProfileViewModel = viewModel()
 ) {
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
@@ -99,6 +102,19 @@ fun ProfileScreen(
         viewModel.refresh()
     }
 
+    // 변경 이유: 상세 화면(SessionDetailScreen) 노출 여부를 상위(MainScreen)에 알려
+    // 홈 MapLibreView를 임시 언마운트할 수 있게 한다.
+    val isDetailVisible = selectedSessionId != null
+    LaunchedEffect(isDetailVisible) {
+        onSessionDetailVisibleChange(isDetailVisible)
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            onSessionDetailVisibleChange(false)
+            onSessionDetailImmersiveChange(false)
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         SessionListContent(
             sessions = sessions,
@@ -107,7 +123,8 @@ fun ProfileScreen(
             onCardClick = { viewModel.selectSession(it) },
             onDeleteSession = { viewModel.deleteSession(it) },
             onDeleteSessions = { viewModel.deleteSessions(it) },
-            loadThumbnailFile = { viewModel.getThumbnailFile(it) },
+            loadThumbnailFileIfExists = { viewModel.getThumbnailFileIfExists(it) },
+            ensureThumbnailFile = { id, points -> viewModel.ensureThumbnailFile(id, points) },
             loadPoints = { viewModel.loadPoints(it) }
         )
 
@@ -116,6 +133,7 @@ fun ProfileScreen(
             SessionDetailScreen(
                 sessionId = selectedSessionId!!,
                 onBack = { viewModel.clearSelection() },
+                onImmersiveChange = onSessionDetailImmersiveChange,
                 modifier = Modifier.fillMaxSize()
             )
         }
@@ -131,7 +149,8 @@ private fun SessionListContent(
     onCardClick: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
     onDeleteSessions: (Set<String>) -> Unit,
-    loadThumbnailFile: suspend (String) -> File?,
+    loadThumbnailFileIfExists: suspend (String) -> File?,
+    ensureThumbnailFile: suspend (String, List<TrackingPoint>) -> File?,
     loadPoints: suspend (String) -> List<TrackingPoint>
 ) {
     var pendingDeleteId by remember { mutableStateOf<String?>(null) }
@@ -187,7 +206,10 @@ private fun SessionListContent(
                                     session = session,
                                     onCardClick = { onCardClick(session.id) },
                                     onDeleteClick = { pendingDeleteId = session.id },
-                                    loadThumbnailFile = { loadThumbnailFile(session.id) },
+                                    loadThumbnailFileIfExists = { loadThumbnailFileIfExists(session.id) },
+                                    ensureThumbnailFile = { points ->
+                                        ensureThumbnailFile(session.id, points)
+                                    },
                                     loadPoints = { loadPoints(session.id) },
                                     isEditMode = isEditMode,
                                     isSelected = session.id in selectedIds,
@@ -222,7 +244,10 @@ private fun SessionListContent(
                                 ThumbnailGridItem(
                                     session = session,
                                     onCardClick = { onCardClick(session.id) },
-                                    loadThumbnailFile = { loadThumbnailFile(session.id) },
+                                    loadThumbnailFileIfExists = { loadThumbnailFileIfExists(session.id) },
+                                    ensureThumbnailFile = { points ->
+                                        ensureThumbnailFile(session.id, points)
+                                    },
                                     loadPoints = { loadPoints(session.id) },
                                     isEditMode = isEditMode,
                                     isSelected = session.id in selectedIds,
@@ -403,7 +428,8 @@ private fun SessionCard(
     session: TrackingSession,
     onCardClick: () -> Unit,
     onDeleteClick: () -> Unit,
-    loadThumbnailFile: suspend () -> File?,
+    loadThumbnailFileIfExists: suspend () -> File?,
+    ensureThumbnailFile: suspend (List<TrackingPoint>) -> File?,
     loadPoints: suspend () -> List<TrackingPoint>,
     isEditMode: Boolean = false,
     isSelected: Boolean = false,
@@ -421,7 +447,8 @@ private fun SessionCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             TrackingThumbnail(
-                loadThumbnailFile = loadThumbnailFile,
+                loadThumbnailFileIfExists = loadThumbnailFileIfExists,
+                ensureThumbnailFile = ensureThumbnailFile,
                 loadPoints = loadPoints,
                 modifier = Modifier.size(72.dp)
             )
@@ -468,7 +495,8 @@ private fun SessionCard(
 private fun ThumbnailGridItem(
     session: TrackingSession,
     onCardClick: () -> Unit,
-    loadThumbnailFile: suspend () -> File?,
+    loadThumbnailFileIfExists: suspend () -> File?,
+    ensureThumbnailFile: suspend (List<TrackingPoint>) -> File?,
     loadPoints: suspend () -> List<TrackingPoint>,
     isEditMode: Boolean = false,
     isSelected: Boolean = false,
@@ -485,7 +513,8 @@ private fun ThumbnailGridItem(
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             TrackingThumbnail(
-                loadThumbnailFile = loadThumbnailFile,
+                loadThumbnailFileIfExists = loadThumbnailFileIfExists,
+                ensureThumbnailFile = ensureThumbnailFile,
                 loadPoints = loadPoints,
                 modifier = Modifier.fillMaxSize()
             )
@@ -530,25 +559,37 @@ private fun ThumbnailGridItem(
  */
 @Composable
 private fun TrackingThumbnail(
-    loadThumbnailFile: suspend () -> File?,
+    loadThumbnailFileIfExists: suspend () -> File?,
+    ensureThumbnailFile: suspend (List<TrackingPoint>) -> File?,
     loadPoints: suspend () -> List<TrackingPoint>,
     modifier: Modifier = Modifier
 ) {
     val state by produceState<ThumbnailState>(ThumbnailState.Loading) {
-        val file = loadThumbnailFile()
-        val bitmap = if (file != null && file.exists()) {
-            withContext(Dispatchers.IO) {
+        suspend fun decode(file: File?): ImageBitmap? {
+            if (file == null || !file.exists()) return null
+            return withContext(Dispatchers.IO) {
                 runCatching { BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap() }
                     .getOrNull()
             }
-        } else null
+        }
 
-        value = if (bitmap != null) {
-            ThumbnailState.MapImage(bitmap)
-        } else {
-            val points = loadPoints()
-            if (points.isNotEmpty()) ThumbnailState.PathFallback(points)
-            else ThumbnailState.Empty
+        // 1) 이미 생성된 PNG가 있으면 즉시 표시
+        val cached = decode(loadThumbnailFileIfExists())
+        if (cached != null) {
+            value = ThumbnailState.MapImage(cached)
+            return@produceState
+        }
+
+        // 2) 생성 대기 전에 폴백(경로 라인)부터 먼저 보여준다.
+        // 변경 이유: 썸네일 생성은 Mutex 직렬화라 대기 시간이 생길 수 있으므로
+        // 카드를 빈칸으로 두지 않고 즉시 콘텐츠를 노출해 첫 스크롤 체감을 개선한다.
+        val points = loadPoints()
+        value = if (points.isNotEmpty()) ThumbnailState.PathFallback(points) else ThumbnailState.Empty
+
+        // 3) 백그라운드 생성 완료 후 지도+경로 PNG로 교체
+        val generated = decode(ensureThumbnailFile(points))
+        if (generated != null) {
+            value = ThumbnailState.MapImage(generated)
         }
     }
 

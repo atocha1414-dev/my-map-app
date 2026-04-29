@@ -35,6 +35,7 @@ import androidx.compose.material3.TextButton
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -64,6 +65,7 @@ import com.connor.mymap.ui.map.MapLibreView
 fun SessionDetailScreen(
     sessionId: String,
     onBack: () -> Unit,
+    onImmersiveChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // 변경 이유: 기본 viewModel()은 Activity의 ViewModelStore를 공유하므로
@@ -114,8 +116,16 @@ fun SessionDetailScreen(
     // 몰입 모드 중 뒤로가기 → 몰입 해제, 일반 상태 → 화면 종료
     BackHandler(enabled = isImmersive) { isImmersive = false }
 
+    // 변경 이유: 상세 재생 화면 몰입 모드일 때는 하단 탭바도 함께 숨겨야
+    // 홈 화면 몰입 모드와 동일한 UX를 제공할 수 있다.
+    LaunchedEffect(isImmersive) {
+        onImmersiveChange(isImmersive)
+    }
     DisposableEffect(Unit) {
-        onDispose { viewModel.pause() }
+        onDispose {
+            viewModel.pause()
+            onImmersiveChange(false)
+        }
     }
 
     Column(modifier = modifier.fillMaxSize()) {
