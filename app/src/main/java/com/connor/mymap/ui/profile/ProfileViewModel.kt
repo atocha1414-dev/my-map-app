@@ -56,10 +56,19 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
 
     private val _selectedSessionId = MutableStateFlow<String?>(null)
     val selectedSessionId: StateFlow<String?> = _selectedSessionId.asStateFlow()
+    private val _collapsedGroupLabels = MutableStateFlow<Set<String>>(emptySet())
+    val collapsedGroupLabels: StateFlow<Set<String>> = _collapsedGroupLabels.asStateFlow()
     private var refreshJob: Job? = null
 
     fun selectSession(id: String) { _selectedSessionId.value = id }
     fun clearSelection() { _selectedSessionId.value = null }
+    fun toggleGroupCollapsed(label: String) {
+        _collapsedGroupLabels.value = if (label in _collapsedGroupLabels.value) {
+            _collapsedGroupLabels.value - label
+        } else {
+            _collapsedGroupLabels.value + label
+        }
+    }
 
     init {
         refresh()
@@ -77,6 +86,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                     if (recent.isNotEmpty()) {
                         _sessions.value = recent
                         _sessionGroups.value = groupSessionsByDate(recent)
+                        reconcileCollapsedLabels(_sessionGroups.value)
                         _isLoading.value = false
                     }
                 }
@@ -84,6 +94,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                 val full = historyStorage.list()
                 _sessions.value = full
                 _sessionGroups.value = groupSessionsByDate(full)
+                reconcileCollapsedLabels(_sessionGroups.value)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -139,6 +150,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                 thumbnailStorage.delete(id)
                 _sessions.value = _sessions.value.filterNot { it.id == id }
                 _sessionGroups.value = removeSessionsFromGroups(_sessionGroups.value, setOf(id))
+                reconcileCollapsedLabels(_sessionGroups.value)
             } catch (e: Exception) {
                 Logger.e(TAG, "Failed to delete tracking session", e)
             }
@@ -154,6 +166,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                 }
                 _sessions.value = _sessions.value.filterNot { it.id in ids }
                 _sessionGroups.value = removeSessionsFromGroups(_sessionGroups.value, ids)
+                reconcileCollapsedLabels(_sessionGroups.value)
             } catch (e: Exception) {
                 Logger.e(TAG, "Failed to delete tracking sessions", e)
             }
@@ -202,6 +215,11 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             val remaining = group.sessions.filterNot { it.id in ids }
             if (remaining.isEmpty()) null else group.copy(sessions = remaining)
         }
+    }
+
+    private fun reconcileCollapsedLabels(groups: List<SessionGroup>) {
+        val valid = groups.asSequence().map { it.label }.toSet()
+        _collapsedGroupLabels.value = _collapsedGroupLabels.value.intersect(valid)
     }
 }
 

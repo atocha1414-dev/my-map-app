@@ -45,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -128,32 +129,13 @@ fun SessionDetailScreen(
         }
     }
 
-    Column(modifier = modifier.fillMaxSize()) {
-
-        // 상단 바 — 위로 슬라이드 아웃
-        AnimatedVisibility(
-            visible = !isImmersive,
-            enter = slideInVertically { -it } + fadeIn(),
-            exit = slideOutVertically { -it } + fadeOut()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface)
-                    .statusBarsPadding()
-                    .padding(end = 16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
-                }
-                Text(
-                    text = "경로 재생",
-                    style = MaterialTheme.typography.titleLarge
-                )
-            }
-        }
-
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            // 변경 이유: 컨트롤 페이드/슬라이드 애니메이션 중 투명 구간에서
+            // 아래의 이동기록 화면이 비쳐 보이는 현상을 막기 위해 상세 화면 루트를 불투명 배경으로 고정.
+            .background(MaterialTheme.colorScheme.background)
+    ) {
         // 지도 영역 — 상단 바·컨트롤이 사라지면 weight(1f)로 전체 화면을 채움
         Box(
             modifier = Modifier
@@ -188,6 +170,44 @@ fun SessionDetailScreen(
 
             if (isLoading) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            }
+
+            // 상단 바 — 지도 위 오버레이 (위로 슬라이드 아웃)
+            // 변경 이유: 상단 그라디언트를 Column 상단에 두면 뒤의 "이동 기록" 화면이 비쳐 겹쳐 보일 수 있다.
+            // 지도 Box 안에 올리면 투명 구간 뒤에는 지도만 보이므로 겹침 현상이 사라진다.
+            androidx.compose.animation.AnimatedVisibility(
+                visible = !isImmersive,
+                enter = slideInVertically { -it } + fadeIn(),
+                exit = slideOutVertically { -it } + fadeOut(),
+                modifier = Modifier.align(Alignment.TopCenter)
+            ) {
+                val headerBaseColor = MaterialTheme.colorScheme.surface
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                0.0f to headerBaseColor.copy(alpha = 0.97f),
+                                0.75f to headerBaseColor.copy(alpha = 0.85f),
+                                1.0f to headerBaseColor.copy(alpha = 0f)
+                            )
+                        )
+                        .statusBarsPadding()
+                        .padding(end = 16.dp, bottom = 20.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
+                        }
+                        Text(
+                            text = "경로 재생",
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                    }
+                }
             }
         }
 

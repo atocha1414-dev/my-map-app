@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +36,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -62,6 +64,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -97,6 +100,7 @@ fun ProfileScreen(
     val sessionGroups by viewModel.sessionGroups.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val selectedSessionId by viewModel.selectedSessionId.collectAsStateWithLifecycle()
+    val collapsedGroupLabels by viewModel.collapsedGroupLabels.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         viewModel.refresh()
@@ -119,8 +123,10 @@ fun ProfileScreen(
         SessionListContent(
             sessions = sessions,
             sessionGroups = sessionGroups,
+            collapsedGroupLabels = collapsedGroupLabels,
             isLoading = isLoading,
             onCardClick = { viewModel.selectSession(it) },
+            onToggleGroupCollapsed = viewModel::toggleGroupCollapsed,
             onDeleteSession = { viewModel.deleteSession(it) },
             onDeleteSessions = { viewModel.deleteSessions(it) },
             loadThumbnailFileIfExists = { viewModel.getThumbnailFileIfExists(it) },
@@ -145,8 +151,10 @@ fun ProfileScreen(
 private fun SessionListContent(
     sessions: List<TrackingSession>,
     sessionGroups: List<SessionGroup>,
+    collapsedGroupLabels: Set<String>,
     isLoading: Boolean,
     onCardClick: (String) -> Unit,
+    onToggleGroupCollapsed: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
     onDeleteSessions: (Set<String>) -> Unit,
     loadThumbnailFileIfExists: suspend (String) -> File?,
@@ -198,28 +206,38 @@ private fun SessionListContent(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         sessionGroups.forEach { group ->
+                            val isExpanded = group.label !in collapsedGroupLabels
                             stickyHeader(key = "header_${group.label}") {
-                                DateSectionHeader(label = group.label, bgColor = bgColor)
-                            }
-                            items(group.sessions, key = { it.id }) { session ->
-                                SessionCard(
-                                    session = session,
-                                    onCardClick = { onCardClick(session.id) },
-                                    onDeleteClick = { pendingDeleteId = session.id },
-                                    loadThumbnailFileIfExists = { loadThumbnailFileIfExists(session.id) },
-                                    ensureThumbnailFile = { points ->
-                                        ensureThumbnailFile(session.id, points)
-                                    },
-                                    loadPoints = { loadPoints(session.id) },
-                                    isEditMode = isEditMode,
-                                    isSelected = session.id in selectedIds,
-                                    onToggleSelect = {
-                                        selectedIds = if (session.id in selectedIds)
-                                            selectedIds - session.id
-                                        else
-                                            selectedIds + session.id
+                                DateSectionHeader(
+                                    label = group.label,
+                                    bgColor = bgColor,
+                                    isExpanded = isExpanded,
+                                    onToggle = {
+                                        onToggleGroupCollapsed(group.label)
                                     }
                                 )
+                            }
+                            if (isExpanded) {
+                                items(group.sessions, key = { it.id }) { session ->
+                                    SessionCard(
+                                        session = session,
+                                        onCardClick = { onCardClick(session.id) },
+                                        onDeleteClick = { pendingDeleteId = session.id },
+                                        loadThumbnailFileIfExists = { loadThumbnailFileIfExists(session.id) },
+                                        ensureThumbnailFile = { points ->
+                                            ensureThumbnailFile(session.id, points)
+                                        },
+                                        loadPoints = { loadPoints(session.id) },
+                                        isEditMode = isEditMode,
+                                        isSelected = session.id in selectedIds,
+                                        onToggleSelect = {
+                                            selectedIds = if (session.id in selectedIds)
+                                                selectedIds - session.id
+                                            else
+                                                selectedIds + session.id
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -237,27 +255,37 @@ private fun SessionListContent(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         sessionGroups.forEach { group ->
+                            val isExpanded = group.label !in collapsedGroupLabels
                             item(span = { GridItemSpan(maxLineSpan) }) {
-                                DateSectionHeader(label = group.label, bgColor = bgColor)
-                            }
-                            gridItems(group.sessions, key = { it.id }) { session ->
-                                ThumbnailGridItem(
-                                    session = session,
-                                    onCardClick = { onCardClick(session.id) },
-                                    loadThumbnailFileIfExists = { loadThumbnailFileIfExists(session.id) },
-                                    ensureThumbnailFile = { points ->
-                                        ensureThumbnailFile(session.id, points)
-                                    },
-                                    loadPoints = { loadPoints(session.id) },
-                                    isEditMode = isEditMode,
-                                    isSelected = session.id in selectedIds,
-                                    onToggleSelect = {
-                                        selectedIds = if (session.id in selectedIds)
-                                            selectedIds - session.id
-                                        else
-                                            selectedIds + session.id
+                                DateSectionHeader(
+                                    label = group.label,
+                                    bgColor = bgColor,
+                                    isExpanded = isExpanded,
+                                    onToggle = {
+                                        onToggleGroupCollapsed(group.label)
                                     }
                                 )
+                            }
+                            if (isExpanded) {
+                                gridItems(group.sessions, key = { it.id }) { session ->
+                                    ThumbnailGridItem(
+                                        session = session,
+                                        onCardClick = { onCardClick(session.id) },
+                                        loadThumbnailFileIfExists = { loadThumbnailFileIfExists(session.id) },
+                                        ensureThumbnailFile = { points ->
+                                            ensureThumbnailFile(session.id, points)
+                                        },
+                                        loadPoints = { loadPoints(session.id) },
+                                        isEditMode = isEditMode,
+                                        isSelected = session.id in selectedIds,
+                                        onToggleSelect = {
+                                            selectedIds = if (session.id in selectedIds)
+                                                selectedIds - session.id
+                                            else
+                                                selectedIds + session.id
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -410,17 +438,33 @@ private fun SessionListContent(
 }
 
 @Composable
-private fun DateSectionHeader(label: String, bgColor: androidx.compose.ui.graphics.Color) {
-    Text(
-        text = label,
-        style = MaterialTheme.typography.titleSmall,
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+private fun DateSectionHeader(
+    label: String,
+    bgColor: Color,
+    isExpanded: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(bgColor)
+            .clickable(onClick = onToggle)
             .padding(top = 8.dp, bottom = 6.dp)
-    )
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        Icon(
+            imageVector = Icons.Default.ExpandMore,
+            contentDescription = if (isExpanded) "접기" else "펼치기",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.rotate(if (isExpanded) 0f else -90f)
+        )
+    }
 }
 
 @Composable
