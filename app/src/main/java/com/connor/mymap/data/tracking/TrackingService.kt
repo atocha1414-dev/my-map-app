@@ -13,6 +13,7 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.connor.mymap.MainActivity
@@ -22,6 +23,7 @@ import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.util.Logger
 import com.connor.mymap.util.TrackingCalculator
 import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.Granularity
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
@@ -65,6 +67,16 @@ class TrackingService : Service() {
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             result.locations.forEach { location ->
+                // 변경 이유: MIN_DISTANCE_METERS=0 이후 FusedProvider가 캐시된(stale) 첫 픽스를 즉시 전달.
+                // 이 픽스의 timestamp는 수 분~수십 분 전일 수 있어, PlaybackViewModel.totalMs(포인트 ts 기반)가
+                // 실제 세션 길이보다 훨씬 길게 표시되는 문제가 있었다. elapsedRealtime 기준으로 오래된 픽스는 버린다.
+                val ageMillis =
+                    (SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos) / 1_000_000L
+                if (ageMillis > MAX_LOCATION_AGE_MILLIS) {
+                    Logger.d(TAG, "Stale location dropped, age=${ageMillis}ms")
+                    return@forEach
+                }
+
                 val point = TrackingPoint(
                     latitude = location.latitude,
                     longitude = location.longitude,
@@ -73,7 +85,18 @@ class TrackingService : Service() {
                     segmentIndex = activeSegmentIndex
                 )
 
-                if (!TrackingCalculator.shouldAcceptPoint(lastAcceptedPoint, point)) {
+                val elapsedSinceStartMillis = if (trackingStartedAtMillis > 0L) {
+                    (point.timestampMillis - trackingStartedAtMillis).coerceAtLeast(0L)
+                } else {
+                    0L
+                }
+
+                if (!TrackingCalculator.shouldAcceptPoint(
+                        previous = lastAcceptedPoint,
+                        candidate = point,
+                        elapsedSinceStartMillis = elapsedSinceStartMillis
+                    )
+                ) {
                     Logger.d(TAG, "Track point ignored by GPS filter")
                     return@forEach
                 }
@@ -187,6 +210,10 @@ class TrackingService : Service() {
                 )
                     .setMinUpdateIntervalMillis(FASTEST_LOCATION_INTERVAL_MILLIS)
                     .setMinUpdateDistanceMeters(MIN_DISTANCE_METERS)
+                    // 변경 이유: 트래킹 시작 직후 품질이 낮은 첫 GPS를 곧바로 쓰면 경로가 튀기 쉽다.
+                    // 정확한 위치를 우선 기다리고(FINE granularity), 수집 간격도 촘촘하게 조정한다.
+                    .setWaitForAccurateLocation(true)
+                    .setGranularity(Granularity.GRANULARITY_FINE)
                     .build()
 
                 fusedClient.requestLocationUpdates(request, locationCallback, mainLooper)
@@ -350,9 +377,15 @@ class TrackingService : Service() {
         private const val CHANNEL_ID = "tracking_channel"
         private const val NOTIFICATION_ID = 1001
         private const val NOTIFICATION_UPDATE_INTERVAL_MILLIS = 1_000L
-        private const val LOCATION_INTERVAL_MILLIS = 5_000L
-        private const val FASTEST_LOCATION_INTERVAL_MILLIS = 2_000L
-        private const val MIN_DISTANCE_METERS = 5f
+        // 정확도 우선 프리셋
+        private const val LOCATION_INTERVAL_MILLIS = 3_000L
+        private const val FASTEST_LOCATION_INTERVAL_MILLIS = 1_000L
+        // 변경 이유: FusedProvider 단계에서 거리 컷오프를 두면 천천히 걷기 시작할 때 첫 몇 미터가 누락된다.
+        // 노이즈 필터링은 TrackingCalculator.MIN_ACCEPTED_DISTANCE_METERS에서 이미 처리하므로
+        // 여기서는 0으로 두고 모든 업데이트를 받아 더 촘촘한 트랙을 만든다.
+        private const val MIN_DISTANCE_METERS = 0f
+        // 변경 이유: 캐시된 stale 픽스를 거르는 임계값. 5초보다 오래된 측정은 새 트랙에 부적절.
+        private const val MAX_LOCATION_AGE_MILLIS = 5_000L
         private val TAXI_FRAMES = listOf("🚕·", "🚕··", "🚕···", "🚕··")
 
         const val ACTION_STOP = "com.connor.mymap.action.STOP_TRACKING"

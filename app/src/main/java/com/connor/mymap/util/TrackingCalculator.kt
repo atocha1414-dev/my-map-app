@@ -35,9 +35,17 @@ object TrackingCalculator {
 
     fun shouldAcceptPoint(
         previous: TrackingPoint?,
-        candidate: TrackingPoint
+        candidate: TrackingPoint,
+        elapsedSinceStartMillis: Long = Long.MAX_VALUE
     ): Boolean {
-        if (candidate.accuracy > MAX_ACCEPTED_ACCURACY_METERS) {
+        val isWarmup = elapsedSinceStartMillis in 0 until WARMUP_DURATION_MILLIS
+        val accuracyThreshold = if (isWarmup) {
+            WARMUP_MAX_ACCEPTED_ACCURACY_METERS
+        } else {
+            MAX_ACCEPTED_ACCURACY_METERS
+        }
+
+        if (candidate.accuracy > accuracyThreshold) {
             return false
         }
 
@@ -70,7 +78,9 @@ object TrackingCalculator {
         return results[0]
     }
 
-    private const val MAX_ACCEPTED_ACCURACY_METERS = 100f
-    private const val MIN_ACCEPTED_DISTANCE_METERS = 3f
+    private const val WARMUP_DURATION_MILLIS = 15_000L
+    private const val WARMUP_MAX_ACCEPTED_ACCURACY_METERS = 25f
+    private const val MAX_ACCEPTED_ACCURACY_METERS = 50f
+    private const val MIN_ACCEPTED_DISTANCE_METERS = 2f
     private const val MAX_ACCEPTED_SPEED_METERS_PER_SECOND = 55.6f // about 200 km/h
 }
