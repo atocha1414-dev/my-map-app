@@ -18,6 +18,7 @@ local.properties
 secrets.properties
 *.keystore
 *.jks
+keystore.properties
 google-services.json
 release-keys/
 
