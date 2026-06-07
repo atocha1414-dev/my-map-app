@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -25,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.connor.mymap.ui.footprints.FootprintsScreen
 import com.connor.mymap.ui.map.MapScreen
 import com.connor.mymap.ui.profile.ProfileScreen
 
@@ -81,7 +83,11 @@ fun MainScreen() {
             .fillMaxSize()
             .padding(bottom = padding.calculateBottomPadding())
         ) {
-            val keepHomeMapComposed = !(selectedTab == MainTab.Profile && isProfileDetailVisible)
+            // 변경 이유: 발자취 탭은 자체 MapLibreView(히트맵)를 띄우므로,
+            // 그 순간 홈 지도까지 유지하면 네이티브 지도 인스턴스가 2개가 된다.
+            // 발자취 탭과 프로필 상세에서는 홈 지도를 잠시 언마운트해 동시 2개를 피한다.
+            val keepHomeMapComposed = selectedTab == MainTab.Home ||
+                (selectedTab == MainTab.Profile && !isProfileDetailVisible)
 
             // 변경 이유: 프로필 상세 재생 화면(SessionDetailScreen)도 MapLibreView를 사용하므로,
             // 그 순간 홈 MapLibreView까지 유지하면 네이티브 메모리가 2배 가까이 튈 수 있다.
@@ -94,6 +100,10 @@ fun MainScreen() {
                         .fillMaxSize()
                         .graphicsLayer { alpha = if (selectedTab == MainTab.Home) 1f else 0f }
                 )
+            }
+            // 발자취(히트맵) 탭. 상태는 ViewModel에 있으므로 탭 전환 시 재생성해도 무방하다.
+            if (selectedTab == MainTab.Footprints) {
+                FootprintsScreen(modifier = Modifier.fillMaxSize())
             }
             // ProfileScreen은 상태가 ViewModel/스토리지에 있으므로 재생성해도 무방하다.
             if (selectedTab == MainTab.Profile) {
@@ -113,5 +123,6 @@ fun MainScreen() {
 
 enum class MainTab(val label: String, val icon: ImageVector) {
     Home(label = "홈", icon = Icons.Default.Map),
+    Footprints(label = "발자취", icon = Icons.Default.Timeline),
     Profile(label = "목록", icon = Icons.AutoMirrored.Filled.List)
 }
