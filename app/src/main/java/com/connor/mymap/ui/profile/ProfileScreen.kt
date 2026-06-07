@@ -82,6 +82,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.domain.model.TrackingSession
+import com.connor.mymap.ui.footprints.FootprintsScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -92,7 +93,7 @@ import java.util.Locale
 @Composable
 fun ProfileScreen(
     modifier: Modifier = Modifier,
-    onSessionDetailVisibleChange: (Boolean) -> Unit = {},
+    onSecondaryMapVisibleChange: (Boolean) -> Unit = {},
     onSessionDetailImmersiveChange: (Boolean) -> Unit = {},
     viewModel: ProfileViewModel = viewModel()
 ) {
@@ -102,37 +103,55 @@ fun ProfileScreen(
     val selectedSessionId by viewModel.selectedSessionId.collectAsStateWithLifecycle()
     val collapsedGroupLabels by viewModel.collapsedGroupLabels.collectAsStateWithLifecycle()
 
+    // 목록 탭 내부 세분화: [기록] / [발자취]
+    var section by rememberSaveable { mutableStateOf(ProfileSection.Records) }
+
     LaunchedEffect(Unit) {
         viewModel.refresh()
     }
 
-    // 변경 이유: 상세 화면(SessionDetailScreen) 노출 여부를 상위(MainScreen)에 알려
-    // 홈 MapLibreView를 임시 언마운트할 수 있게 한다.
+    // 변경 이유: 세션 상세(재생) 또는 발자취 섹션이 보이면 두 번째 MapLibreView가 뜨므로,
+    // 상위(MainScreen)에 알려 홈 지도를 임시 언마운트할 수 있게 한다.
     val isDetailVisible = selectedSessionId != null
-    LaunchedEffect(isDetailVisible) {
-        onSessionDetailVisibleChange(isDetailVisible)
+    val secondaryMapVisible = isDetailVisible || section == ProfileSection.Footprints
+    LaunchedEffect(secondaryMapVisible) {
+        onSecondaryMapVisibleChange(secondaryMapVisible)
     }
     DisposableEffect(Unit) {
         onDispose {
-            onSessionDetailVisibleChange(false)
+            onSecondaryMapVisibleChange(false)
             onSessionDetailImmersiveChange(false)
         }
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        SessionListContent(
-            sessions = sessions,
-            sessionGroups = sessionGroups,
-            collapsedGroupLabels = collapsedGroupLabels,
-            isLoading = isLoading,
-            onCardClick = { viewModel.selectSession(it) },
-            onToggleGroupCollapsed = viewModel::toggleGroupCollapsed,
-            onDeleteSession = { viewModel.deleteSession(it) },
-            onDeleteSessions = { viewModel.deleteSessions(it) },
-            loadThumbnailFileIfExists = { viewModel.getThumbnailFileIfExists(it) },
-            ensureThumbnailFile = { id, points -> viewModel.ensureThumbnailFile(id, points) },
-            loadPoints = { viewModel.loadPoints(it) }
-        )
+        Column(modifier = Modifier.fillMaxSize()) {
+            ProfileSectionTabs(
+                section = section,
+                onSelect = { section = it }
+            )
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                when (section) {
+                    ProfileSection.Records -> SessionListContent(
+                        sessions = sessions,
+                        sessionGroups = sessionGroups,
+                        collapsedGroupLabels = collapsedGroupLabels,
+                        isLoading = isLoading,
+                        onCardClick = { viewModel.selectSession(it) },
+                        onToggleGroupCollapsed = viewModel::toggleGroupCollapsed,
+                        onDeleteSession = { viewModel.deleteSession(it) },
+                        onDeleteSessions = { viewModel.deleteSessions(it) },
+                        loadThumbnailFileIfExists = { viewModel.getThumbnailFileIfExists(it) },
+                        ensureThumbnailFile = { id, points -> viewModel.ensureThumbnailFile(id, points) },
+                        loadPoints = { viewModel.loadPoints(it) }
+                    )
+
+                    ProfileSection.Footprints -> FootprintsScreen(
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+        }
 
         if (selectedSessionId != null) {
             BackHandler { viewModel.clearSelection() }
@@ -142,6 +161,54 @@ fun ProfileScreen(
                 onImmersiveChange = onSessionDetailImmersiveChange,
                 modifier = Modifier.fillMaxSize()
             )
+        }
+    }
+}
+
+private enum class ProfileSection(val label: String) {
+    Records("기록"),
+    Footprints("발자취")
+}
+
+/** 목록 탭 상단의 [기록] / [발자취] 세그먼트 토글 (브랜드 색 알약형). */
+@Composable
+private fun ProfileSectionTabs(
+    section: ProfileSection,
+    onSelect: (ProfileSection) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+            .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(4.dp)
+        ) {
+            ProfileSection.entries.forEach { item ->
+                val selected = item == section
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                        .clickable { onSelect(item) }
+                        .padding(horizontal = 28.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        text = item.label,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (selected) MaterialTheme.colorScheme.onPrimary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
 }
@@ -176,7 +243,6 @@ private fun SessionListContent(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding()
     ) {
         when {
             isLoading && sessions.isEmpty() -> {
@@ -320,16 +386,16 @@ private fun SessionListContent(
                         }
                     )
                 }
-                Text(
-                    text = when {
-                        !isEditMode -> "이동 기록"
-                        selectedIds.isEmpty() -> "항목 선택"
-                        else -> "${selectedIds.size}개 선택됨"
-                    },
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f)
-                )
+                if (isEditMode) {
+                    Text(
+                        text = if (selectedIds.isEmpty()) "항목 선택" else "${selectedIds.size}개 선택됨",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f)
+                    )
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
                 if (sessions.isNotEmpty() && !isEditMode) {
                     IconButton(onClick = {
                         viewMode = if (viewMode == ViewMode.List) ViewMode.Grid else ViewMode.List
