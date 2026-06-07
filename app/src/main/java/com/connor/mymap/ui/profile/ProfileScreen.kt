@@ -48,6 +48,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -83,6 +84,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.domain.model.TrackingSession
 import com.connor.mymap.ui.footprints.FootprintsScreen
+import com.connor.mymap.ui.footprints.FootprintsViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -95,25 +97,31 @@ fun ProfileScreen(
     modifier: Modifier = Modifier,
     onSecondaryMapVisibleChange: (Boolean) -> Unit = {},
     onSessionDetailImmersiveChange: (Boolean) -> Unit = {},
-    viewModel: ProfileViewModel = viewModel()
+    viewModel: ProfileViewModel = viewModel(),
+    footprintsViewModel: FootprintsViewModel = viewModel()
 ) {
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
     val sessionGroups by viewModel.sessionGroups.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val selectedSessionId by viewModel.selectedSessionId.collectAsStateWithLifecycle()
     val collapsedGroupLabels by viewModel.collapsedGroupLabels.collectAsStateWithLifecycle()
+    val selectedFootprintId by footprintsViewModel.selectedId.collectAsStateWithLifecycle()
 
     // 목록 탭 내부 세분화: [기록] / [발자취]
     var section by rememberSaveable { mutableStateOf(ProfileSection.Records) }
+    // 선택한 기록들로 발자취를 만들 때, 이름 입력 다이얼로그에 넘길 대상 id 집합
+    var pendingFootprintIds by remember { mutableStateOf<Set<String>?>(null) }
 
     LaunchedEffect(Unit) {
         viewModel.refresh()
     }
 
-    // 변경 이유: 세션 상세(재생) 또는 발자취 섹션이 보이면 두 번째 MapLibreView가 뜨므로,
+    // 변경 이유: 세션 상세(재생) 또는 발자취 상세(지도)가 보이면 두 번째 MapLibreView가 뜨므로,
     // 상위(MainScreen)에 알려 홈 지도를 임시 언마운트할 수 있게 한다.
+    // 발자취 '목록'에는 지도가 없으므로 여기서는 제외한다.
     val isDetailVisible = selectedSessionId != null
-    val secondaryMapVisible = isDetailVisible || section == ProfileSection.Footprints
+    val footprintDetailOpen = section == ProfileSection.Footprints && selectedFootprintId != null
+    val secondaryMapVisible = isDetailVisible || footprintDetailOpen
     LaunchedEffect(secondaryMapVisible) {
         onSecondaryMapVisibleChange(secondaryMapVisible)
     }
@@ -141,12 +149,14 @@ fun ProfileScreen(
                         onToggleGroupCollapsed = viewModel::toggleGroupCollapsed,
                         onDeleteSession = { viewModel.deleteSession(it) },
                         onDeleteSessions = { viewModel.deleteSessions(it) },
+                        onCreateFootprint = { ids -> pendingFootprintIds = ids },
                         loadThumbnailFileIfExists = { viewModel.getThumbnailFileIfExists(it) },
                         ensureThumbnailFile = { id, points -> viewModel.ensureThumbnailFile(id, points) },
                         loadPoints = { viewModel.loadPoints(it) }
                     )
 
                     ProfileSection.Footprints -> FootprintsScreen(
+                        viewModel = footprintsViewModel,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -163,7 +173,59 @@ fun ProfileScreen(
             )
         }
     }
+
+    pendingFootprintIds?.let { ids ->
+        CreateFootprintDialog(
+            count = ids.size,
+            onConfirm = { name ->
+                footprintsViewModel.create(name, ids)
+                pendingFootprintIds = null
+                section = ProfileSection.Footprints
+            },
+            onDismiss = { pendingFootprintIds = null }
+        )
+    }
 }
+
+@Composable
+private fun CreateFootprintDialog(
+    count: Int,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val default = remember { defaultFootprintName() }
+    var text by remember { mutableStateOf(default) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("발자취 만들기") },
+        text = {
+            Column {
+                Text(
+                    text = "선택한 ${count}개 기록을 하나의 발자취로 모읍니다.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    singleLine = true,
+                    label = { Text("이름") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text.trim().ifEmpty { default }) }) { Text("만들기") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("취소") }
+        }
+    )
+}
+
+private fun defaultFootprintName(): String =
+    SimpleDateFormat("M월 d일 발자취", Locale.KOREA).format(Date())
 
 private enum class ProfileSection(val label: String) {
     Records("기록"),
@@ -224,6 +286,7 @@ private fun SessionListContent(
     onToggleGroupCollapsed: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
     onDeleteSessions: (Set<String>) -> Unit,
+    onCreateFootprint: (Set<String>) -> Unit,
     loadThumbnailFileIfExists: suspend (String) -> File?,
     ensureThumbnailFile: suspend (String, List<TrackingPoint>) -> File?,
     loadPoints: suspend (String) -> List<TrackingPoint>
@@ -438,17 +501,28 @@ private fun SessionListContent(
                         .fillMaxWidth()
                         .navigationBarsPadding()
                         .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (selectedIds.isEmpty()) "항목을 선택해주세요"
-                               else "${selectedIds.size}개 선택됨",
+                        text = if (selectedIds.isEmpty()) "항목 선택"
+                               else "${selectedIds.size}개",
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (selectedIds.isEmpty())
                             MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
                     )
+                    TextButton(
+                        onClick = {
+                            onCreateFootprint(selectedIds)
+                            isEditMode = false
+                            selectedIds = emptySet()
+                        },
+                        enabled = selectedIds.isNotEmpty()
+                    ) {
+                        Text("발자취 만들기")
+                    }
                     Button(
                         onClick = { showBulkDeleteConfirm = true },
                         enabled = selectedIds.isNotEmpty(),
