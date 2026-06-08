@@ -36,7 +36,8 @@ object TrackingCalculator {
     fun shouldAcceptPoint(
         previous: TrackingPoint?,
         candidate: TrackingPoint,
-        elapsedSinceStartMillis: Long = Long.MAX_VALUE
+        elapsedSinceStartMillis: Long = Long.MAX_VALUE,
+        candidateSpeedMetersPerSecond: Float? = null
     ): Boolean {
         val isWarmup = elapsedSinceStartMillis in 0 until WARMUP_DURATION_MILLIS
         val accuracyThreshold = if (isWarmup) {
@@ -55,10 +56,22 @@ object TrackingCalculator {
         if (elapsedSeconds <= 0f) return false
 
         val distanceMeters = previous.distanceTo(candidate)
+        val significantMovementDistance = calculateSignificantMovementDistance(previous, candidate)
 
-        // 변경 이유: 실내/도심에서 GPS가 몇 미터씩 흔들리면 실제 이동 없이도 거리가 누적된다.
-        // 아주 작은 이동은 노이즈로 보고 버려 거리 계산 신뢰도를 우선한다.
-        if (distanceMeters < MIN_ACCEPTED_DISTANCE_METERS) {
+        // 변경 이유: 사용자가 실제로 멈춰 있어도 GPS 좌표는 정확도 반경 안에서 계속 흔들릴 수 있다.
+        // 고정 2m 기준은 이 흔들림을 이동으로 오인하므로, 두 위치의 GPS 정확도에 비례해
+        // "의미 있는 이동 거리"를 동적으로 계산하고 그보다 작은 변화는 포인트로 저장하지 않는다.
+        if (distanceMeters < significantMovementDistance) {
+            return false
+        }
+
+        // 변경 이유: FusedLocationProvider가 속도를 제공하고 그 값이 정지에 가까우면
+        // 순간적인 좌표 튐을 한 번 더 보수적으로 걸러 정지 중 포인트 생성을 줄인다.
+        if (
+            candidateSpeedMetersPerSecond != null &&
+            candidateSpeedMetersPerSecond < STATIONARY_SPEED_METERS_PER_SECOND &&
+            distanceMeters < significantMovementDistance * STATIONARY_DISTANCE_MULTIPLIER
+        ) {
             return false
         }
 
@@ -78,9 +91,23 @@ object TrackingCalculator {
         return results[0]
     }
 
+    private fun calculateSignificantMovementDistance(
+        previous: TrackingPoint,
+        candidate: TrackingPoint
+    ): Float {
+        val accuracyBasedDistance =
+            maxOf(previous.accuracy, candidate.accuracy) * ACCURACY_SIGNIFICANCE_RATIO
+        return accuracyBasedDistance
+            .coerceIn(MIN_ACCEPTED_DISTANCE_METERS, MAX_STATIONARY_DRIFT_DISTANCE_METERS)
+    }
+
     private const val WARMUP_DURATION_MILLIS = 15_000L
     private const val WARMUP_MAX_ACCEPTED_ACCURACY_METERS = 25f
     private const val MAX_ACCEPTED_ACCURACY_METERS = 50f
-    private const val MIN_ACCEPTED_DISTANCE_METERS = 2f
+    private const val MIN_ACCEPTED_DISTANCE_METERS = 8f
+    private const val ACCURACY_SIGNIFICANCE_RATIO = 0.75f
+    private const val MAX_STATIONARY_DRIFT_DISTANCE_METERS = 20f
+    private const val STATIONARY_SPEED_METERS_PER_SECOND = 0.7f // about 2.5 km/h
+    private const val STATIONARY_DISTANCE_MULTIPLIER = 1.5f
     private const val MAX_ACCEPTED_SPEED_METERS_PER_SECOND = 55.6f // about 200 km/h
 }

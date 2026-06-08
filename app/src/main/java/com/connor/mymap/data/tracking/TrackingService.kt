@@ -90,11 +90,15 @@ class TrackingService : Service() {
                 } else {
                     0L
                 }
+                val candidateSpeedMetersPerSecond = if (location.hasSpeed()) location.speed else null
 
                 if (!TrackingCalculator.shouldAcceptPoint(
                         previous = lastAcceptedPoint,
                         candidate = point,
-                        elapsedSinceStartMillis = elapsedSinceStartMillis
+                        elapsedSinceStartMillis = elapsedSinceStartMillis,
+                        // 변경 이유: 정지 상태에서도 GPS 좌표가 흔들리면 새 포인트처럼 보일 수 있다.
+                        // Android가 제공하는 속도 값을 함께 넘겨 정지에 가까운 좌표 튐을 더 보수적으로 거른다.
+                        candidateSpeedMetersPerSecond = candidateSpeedMetersPerSecond
                     )
                 ) {
                     Logger.d(TAG, "Track point ignored by GPS filter")
