@@ -101,6 +101,13 @@ object TrackingCalculator {
             .coerceIn(MIN_ACCEPTED_DISTANCE_METERS, MAX_STATIONARY_DRIFT_DISTANCE_METERS)
     }
 
+    /** 두 위치의 정확도에 비례한 '의미 있는 이동 거리'(앵커 반경). 앵커 필터에서 재사용. */
+    fun significantMovementDistance(previous: TrackingPoint, candidate: TrackingPoint): Float =
+        calculateSignificantMovementDistance(previous, candidate)
+
+    /** 두 점 사이의 평면 거리(m). */
+    fun distance(a: TrackingPoint, b: TrackingPoint): Float = a.distanceTo(b)
+
     private const val WARMUP_DURATION_MILLIS = 15_000L
     private const val WARMUP_MAX_ACCEPTED_ACCURACY_METERS = 25f
     private const val MAX_ACCEPTED_ACCURACY_METERS = 50f

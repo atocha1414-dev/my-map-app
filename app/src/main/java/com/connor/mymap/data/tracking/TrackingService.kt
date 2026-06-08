@@ -45,6 +45,8 @@ class TrackingService : Service() {
     private lateinit var notificationManager: NotificationManager
     @Volatile
     private var lastAcceptedPoint: TrackingPoint? = null
+    // 앵커 기반 + 이동 확정 필터(정지 중 GPS 드리프트로 제자리 선이 그려지는 것을 막는다).
+    private val pointFilter = TrackPointFilter()
     // 변경 이유: serviceScope.launch(Dispatchers.Default)에서 쓰고
     // locationCallback(mainLooper)에서 읽는다. 메모리 가시성 보장 위해 @Volatile 필요.
     @Volatile
@@ -92,31 +94,30 @@ class TrackingService : Service() {
                 }
                 val candidateSpeedMetersPerSecond = if (location.hasSpeed()) location.speed else null
 
-                if (!TrackingCalculator.shouldAcceptPoint(
-                        previous = lastAcceptedPoint,
-                        candidate = point,
-                        elapsedSinceStartMillis = elapsedSinceStartMillis,
-                        // 변경 이유: 정지 상태에서도 GPS 좌표가 흔들리면 새 포인트처럼 보일 수 있다.
-                        // Android가 제공하는 속도 값을 함께 넘겨 정지에 가까운 좌표 튐을 더 보수적으로 거른다.
-                        candidateSpeedMetersPerSecond = candidateSpeedMetersPerSecond
-                    )
-                ) {
-                    Logger.d(TAG, "Track point ignored by GPS filter")
+                // 앵커 기반 + 이동 확정 필터로 정지 중 드리프트를 거른다.
+                // (정확도·속도 sanity는 필터 내부에서 shouldAcceptPoint로 함께 처리한다.)
+                val committed = pointFilter.process(
+                    candidate = point,
+                    elapsedSinceStartMillis = elapsedSinceStartMillis,
+                    candidateSpeedMetersPerSecond = candidateSpeedMetersPerSecond
+                )
+                if (committed == null) {
+                    Logger.d(TAG, "Track point held/ignored by stationary-aware filter")
                     return@forEach
                 }
 
                 val previous = lastAcceptedPoint
-                if (previous != null && previous.segmentIndex == point.segmentIndex) {
-                    totalDistanceMeters += distanceBetween(previous, point)
+                if (previous != null && previous.segmentIndex == committed.segmentIndex) {
+                    totalDistanceMeters += distanceBetween(previous, committed)
                 }
 
-                lastAcceptedPoint = point
-                TrackingState.addTrackPoint(point)
+                lastAcceptedPoint = committed
+                TrackingState.addTrackPoint(committed)
                 serviceScope.launch {
-                    trackingStorage.appendPoint(point)
+                    trackingStorage.appendPoint(committed)
                 }
                 updateForegroundNotification()
-                Logger.d(TAG, "Track point saved, accuracy=${point.accuracy}m")
+                Logger.d(TAG, "Track point saved, accuracy=${committed.accuracy}m")
             }
         }
     }
@@ -197,6 +198,8 @@ class TrackingService : Service() {
                 }
                 TrackingState.startTracking(startedAt)
                 lastAcceptedPoint = if (resumedStart != null) lastPoint else null
+                // 필터 앵커를 현재 기준점(재개 시 마지막 점, 신규 시작 시 null)으로 초기화한다.
+                pointFilter.reset(lastAcceptedPoint)
 
                 totalDistanceMeters = if (resumedStart != null) {
                     val existingPoints = trackingStorage.readPoints()
