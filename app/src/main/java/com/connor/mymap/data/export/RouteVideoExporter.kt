@@ -187,8 +187,13 @@ class RouteVideoExporter(private val context: Context) {
             val options = MapSnapshotter.Options(width, height)
                 .withPixelRatio(1f)
                 .withRegion(bounds)
+                // 변경 이유: MapLibre가 스냅샷에 로고/저작권 오버레이를 그릴 때
+                // createScaledLogo에서 NPE가 나 앱이 죽는다(내부 메인스레드라 catch 불가).
+                // 로고 오버레이를 꺼서 우회한다.
+                .withLogo(false)
                 .withStyleBuilder(Style.Builder().fromJson(buildOfflineMapStyle(mapFilePath)))
-            val snapshotter = MapSnapshotter(context, options)
+            // NoOverlayMapSnapshotter: 로고/저작권 오버레이 그리기(createScaledLogo NPE)를 건너뛴다.
+            val snapshotter = NoOverlayMapSnapshotter(context, options)
             snapshotter.start(
                 { snapshot -> if (cont.isActive) cont.resume(snapshot) },
                 { error -> if (cont.isActive) cont.resumeWithException(RuntimeException("지도 스냅샷 실패: $error")) }
@@ -231,4 +236,17 @@ class RouteVideoExporter(private val context: Context) {
         private const val FPS = 24
         private const val DURATION_SEC = 15
     }
+}
+
+/**
+ * MapLibre 11.5.0 MapSnapshotter는 스냅샷 직후 로고/attribution 오버레이를 자동으로 그리는데,
+ * 일부 환경에서 logo bitmap decode가 null이 되어 SDK 내부 createScaledLogo에서 NPE가 난다
+ * (내부 메인스레드 콜백이라 호출부 try/catch로 막을 수 없음).
+ * addOverlay를 no-op으로 막아 우회한다. (ThumbnailGenerator와 동일한 방식)
+ */
+private class NoOverlayMapSnapshotter(
+    context: Context,
+    options: MapSnapshotter.Options
+) : MapSnapshotter(context, options) {
+    override fun addOverlay(mapSnapshot: MapSnapshot) = Unit
 }
