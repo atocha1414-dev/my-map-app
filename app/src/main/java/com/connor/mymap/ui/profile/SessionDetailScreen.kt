@@ -21,10 +21,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -59,6 +62,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.MutableCreationExtras
 import androidx.lifecycle.viewmodel.compose.viewModel
 import android.app.Application
+import android.content.Intent
+import android.widget.Toast
 import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.ui.map.MapLibreView
 
@@ -106,6 +111,7 @@ fun SessionDetailScreen(
     val routeBounds by viewModel.routeBounds.collectAsStateWithLifecycle()
     val displayElapsedMs by viewModel.displayElapsedMs.collectAsStateWithLifecycle()
     val displayProgress by viewModel.displayProgress.collectAsStateWithLifecycle()
+    val exportState by viewModel.exportState.collectAsStateWithLifecycle()
 
     val mapFilePath = viewModel.mapFilePath
 
@@ -206,6 +212,13 @@ fun SessionDetailScreen(
                             text = "경로 재생",
                             style = MaterialTheme.typography.titleLarge
                         )
+                        Spacer(Modifier.weight(1f))
+                        IconButton(
+                            onClick = { viewModel.exportVideo() },
+                            enabled = canPlay && exportState !is PlaybackViewModel.ExportState.Rendering
+                        ) {
+                            Icon(Icons.Default.Movie, contentDescription = "영상 내보내기")
+                        }
                     }
                 }
             }
@@ -310,6 +323,51 @@ fun SessionDetailScreen(
                     }
                 }
             }
+        }
+    }
+
+    // mp4 내보내기 — 진행 다이얼로그
+    (exportState as? PlaybackViewModel.ExportState.Rendering)?.let { st ->
+        AlertDialog(
+            onDismissRequest = { },
+            confirmButton = { },
+            title = { Text("영상 만드는 중") },
+            text = {
+                Column {
+                    LinearProgressIndicator(
+                        progress = { st.progress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.size(12.dp))
+                    Text("${(st.progress * 100).toInt()}%  ·  잠시만 기다려주세요")
+                }
+            }
+        )
+    }
+
+    // mp4 내보내기 — 완료 시 공유, 오류 시 알림
+    val exportContext = LocalContext.current
+    LaunchedEffect(exportState) {
+        when (val st = exportState) {
+            is PlaybackViewModel.ExportState.Done -> {
+                Toast.makeText(
+                    exportContext,
+                    if (st.savedToGallery) "갤러리에 저장하고 공유합니다" else "영상을 공유합니다",
+                    Toast.LENGTH_SHORT
+                ).show()
+                val share = Intent(Intent.ACTION_SEND).apply {
+                    type = "video/mp4"
+                    putExtra(Intent.EXTRA_STREAM, st.shareUri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                runCatching { exportContext.startActivity(Intent.createChooser(share, "경로 영상 공유")) }
+                viewModel.consumeExportResult()
+            }
+            is PlaybackViewModel.ExportState.Error -> {
+                Toast.makeText(exportContext, st.message, Toast.LENGTH_SHORT).show()
+                viewModel.consumeExportResult()
+            }
+            else -> Unit
         }
     }
 }

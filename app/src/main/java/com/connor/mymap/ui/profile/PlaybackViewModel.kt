@@ -1,6 +1,12 @@
 package com.connor.mymap.ui.profile
 
 import android.app.Application
+import android.content.ContentValues
+import android.content.Context
+import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -20,8 +26,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.maplibre.android.geometry.LatLngBounds
+import com.connor.mymap.data.export.RouteVideoExporter
+import com.connor.mymap.util.TrackingCalculator
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class PlaybackViewModel(
     application: Application,
@@ -216,6 +230,82 @@ class PlaybackViewModel(
             minLat - latPad,
             minLon - lonPad
         )
+    }
+
+    // ─────────── mp4 내보내기 ───────────
+    sealed interface ExportState {
+        data object Idle : ExportState
+        data class Rendering(val progress: Float) : ExportState
+        data class Done(val shareUri: Uri, val savedToGallery: Boolean) : ExportState
+        data class Error(val message: String) : ExportState
+    }
+
+    private val _exportState = MutableStateFlow<ExportState>(ExportState.Idle)
+    val exportState: StateFlow<ExportState> = _exportState.asStateFlow()
+
+    val canExport: StateFlow<Boolean> = canPlay
+
+    fun exportVideo() {
+        if (_exportState.value is ExportState.Rendering) return
+        val path = mapFilePath
+        val pts = _allPoints.value
+        val bounds = _routeBounds.value
+        if (path == null || pts.size < 2 || bounds == null) {
+            _exportState.value = ExportState.Error("내보낼 경로가 없습니다.")
+            return
+        }
+        pause()
+        val app = getApplication<Application>()
+        val stats = TrackingCalculator.calculateStats(pts)
+        val title = SimpleDateFormat("yyyy.MM.dd HH:mm", Locale.KOREA).format(Date(pts.first().timestampMillis))
+        val subtitle = "${formatKm(stats.distanceMeters)} · ${formatExportDuration(stats.durationMillis)}"
+
+        viewModelScope.launch {
+            _exportState.value = ExportState.Rendering(0f)
+            try {
+                val file = RouteVideoExporter(app).export(path, pts, bounds, title, subtitle) { pr ->
+                    _exportState.value = ExportState.Rendering(pr)
+                }
+                val savedToGallery = withContext(Dispatchers.IO) {
+                    runCatching { saveToGallery(app, file) }.getOrDefault(false)
+                }
+                val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
+                _exportState.value = ExportState.Done(uri, savedToGallery)
+            } catch (e: Exception) {
+                Logger.e(TAG, "Video export failed", e)
+                _exportState.value = ExportState.Error(e.message ?: "내보내기에 실패했습니다.")
+            }
+        }
+    }
+
+    fun consumeExportResult() {
+        _exportState.value = ExportState.Idle
+    }
+
+    private fun saveToGallery(context: Context, file: File): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, file.name)
+            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/MyMap")
+            put(MediaStore.Video.Media.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return false
+        resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } } ?: return false
+        values.clear()
+        values.put(MediaStore.Video.Media.IS_PENDING, 0)
+        resolver.update(uri, values, null, null)
+        return true
+    }
+
+    private fun formatKm(meters: Float): String =
+        if (meters >= 1_000f) "%.2f km".format(meters / 1_000f) else "${meters.toInt()} m"
+
+    private fun formatExportDuration(millis: Long): String {
+        val s = millis / 1_000L
+        val h = s / 3_600L; val m = (s % 3_600L) / 60L; val sec = s % 60L
+        return if (h > 0L) "%d:%02d:%02d".format(h, m, sec) else "%02d:%02d".format(m, sec)
     }
 
     override fun onCleared() {

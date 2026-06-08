@@ -98,6 +98,9 @@ dependencies {
     // MapLibre Android SDK
     implementation("org.maplibre.gl:android-sdk:11.5.0")
 
+    // 경로재생 mp4 내보내기: 비트맵 시퀀스를 mp4(H.264)로 인코딩 (순수 자바, GL 불필요)
+    implementation("org.jcodec:jcodec-android:0.2.5")
+
     // OkHttp — R2에서 파일 다운로드
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 

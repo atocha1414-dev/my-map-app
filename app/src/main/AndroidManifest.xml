@@ -32,6 +32,17 @@
             android:exported="false"
             android:foregroundServiceType="location" />
 
+        <!-- 내보낸 mp4를 다른 앱(공유)에 안전하게 전달하기 위한 FileProvider -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
