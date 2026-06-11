@@ -40,7 +40,7 @@ fun LocationDisclosureDialog(
         text = {
             Column {
                 Text(
-                    text = "이 앱은 지도 위에 현재 위치를 표시하고, 사용자가 시작한 이동 경로를 기록하기 위해 위치 정보에 접근합니다.",
+                    text = "이 앱은 지도 위에 현재 위치를 표시하고, 사용자가 시작한 이동 경로를 기록하기 위해 위치 정보에 접근합니다. 기록 중에는 앱이 닫혀 있거나 화면이 꺼져 있어도 위치를 기기 안에 저장해 경로를 이어서 그립니다.",
                     style = MaterialTheme.typography.bodyMedium
                 )
 
@@ -75,6 +75,14 @@ fun LocationDisclosureDialog(
                     emoji = "⏱️",
                     title = "사용 시점",
                     description = "내 위치 확인 시점 또는 사용자가 기록 시작을 누른 동안 사용"
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                DisclosureItem(
+                    emoji = "🔄",
+                    title = "백그라운드 기록",
+                    description = "기록 중에는 앱을 닫아도 위치 기록을 이어가며, 중지하면 즉시 멈춤"
                 )
 
                 Spacer(Modifier.height(16.dp))

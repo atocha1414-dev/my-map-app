@@ -92,6 +92,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+// 임시 출시 정책: 발자취 기능은 코드/저장소를 유지하되 사용자 화면에서는 숨긴다.
+// 추후 UX와 기능을 더 다듬은 뒤 이 값을 true로 바꾸면 탭과 생성 버튼을 다시 노출할 수 있다.
+private const val SHOW_FOOTPRINTS_UI = false
+
 @Composable
 fun ProfileScreen(
     modifier: Modifier = Modifier,
@@ -120,7 +124,8 @@ fun ProfileScreen(
     // 상위(MainScreen)에 알려 홈 지도를 임시 언마운트할 수 있게 한다.
     // 발자취 '목록'에는 지도가 없으므로 여기서는 제외한다.
     val isDetailVisible = selectedSessionId != null
-    val footprintDetailOpen = section == ProfileSection.Footprints && selectedFootprintId != null
+    val footprintDetailOpen =
+        SHOW_FOOTPRINTS_UI && section == ProfileSection.Footprints && selectedFootprintId != null
     val secondaryMapVisible = isDetailVisible || footprintDetailOpen
     LaunchedEffect(secondaryMapVisible) {
         onSecondaryMapVisibleChange(secondaryMapVisible)
@@ -134,10 +139,20 @@ fun ProfileScreen(
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
-            ProfileSectionTabs(
-                section = section,
-                onSelect = { section = it }
-            )
+            if (SHOW_FOOTPRINTS_UI) {
+                ProfileSectionTabs(
+                    section = section,
+                    onSelect = { section = it }
+                )
+            } else {
+                // 발자취 탭을 숨기는 동안에도 목록 화면이 상태바 아래에서 시작하도록 여백만 유지한다.
+                Spacer(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.background)
+                        .statusBarsPadding()
+                )
+            }
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 when (section) {
                     ProfileSection.Records -> SessionListContent(
@@ -149,7 +164,9 @@ fun ProfileScreen(
                         onToggleGroupCollapsed = viewModel::toggleGroupCollapsed,
                         onDeleteSession = { viewModel.deleteSession(it) },
                         onDeleteSessions = { viewModel.deleteSessions(it) },
-                        onCreateFootprint = { ids -> pendingFootprintIds = ids },
+                        onCreateFootprint = { ids ->
+                            if (SHOW_FOOTPRINTS_UI) pendingFootprintIds = ids
+                        },
                         loadThumbnailFileIfExists = { viewModel.getThumbnailFileIfExists(it) },
                         ensureThumbnailFile = { id, points -> viewModel.ensureThumbnailFile(id, points) },
                         loadPoints = { viewModel.loadPoints(it) }
@@ -174,7 +191,7 @@ fun ProfileScreen(
         }
     }
 
-    pendingFootprintIds?.let { ids ->
+    if (SHOW_FOOTPRINTS_UI) pendingFootprintIds?.let { ids ->
         CreateFootprintDialog(
             count = ids.size,
             onConfirm = { name ->
@@ -513,15 +530,17 @@ private fun SessionListContent(
                         else MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f)
                     )
-                    TextButton(
-                        onClick = {
-                            onCreateFootprint(selectedIds)
-                            isEditMode = false
-                            selectedIds = emptySet()
-                        },
-                        enabled = selectedIds.isNotEmpty()
-                    ) {
-                        Text("발자취 만들기")
+                    if (SHOW_FOOTPRINTS_UI) {
+                        TextButton(
+                            onClick = {
+                                onCreateFootprint(selectedIds)
+                                isEditMode = false
+                                selectedIds = emptySet()
+                            },
+                            enabled = selectedIds.isNotEmpty()
+                        ) {
+                            Text("발자취 만들기")
+                        }
                     }
                     Button(
                         onClick = { showBulkDeleteConfirm = true },

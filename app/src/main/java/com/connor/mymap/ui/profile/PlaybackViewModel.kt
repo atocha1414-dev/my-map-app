@@ -236,7 +236,11 @@ class PlaybackViewModel(
     sealed interface ExportState {
         data object Idle : ExportState
         data class Rendering(val progress: Float) : ExportState
-        data class Done(val shareUri: Uri, val savedToGallery: Boolean) : ExportState
+        data class Done(
+            val shareUri: Uri,
+            val galleryUri: Uri?,
+            val savedToGallery: Boolean
+        ) : ExportState
         data class Error(val message: String) : ExportState
     }
 
@@ -266,11 +270,15 @@ class PlaybackViewModel(
                 val file = RouteVideoExporter(app).export(path, pts, bounds, title, subtitle) { pr ->
                     _exportState.value = ExportState.Rendering(pr)
                 }
-                val savedToGallery = withContext(Dispatchers.IO) {
-                    runCatching { saveToGallery(app, file) }.getOrDefault(false)
+                val galleryUri = withContext(Dispatchers.IO) {
+                    runCatching { saveToGallery(app, file) }.getOrNull()
                 }
                 val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
-                _exportState.value = ExportState.Done(uri, savedToGallery)
+                _exportState.value = ExportState.Done(
+                    shareUri = uri,
+                    galleryUri = galleryUri,
+                    savedToGallery = galleryUri != null
+                )
             } catch (e: Exception) {
                 Logger.e(TAG, "Video export failed", e)
                 _exportState.value = ExportState.Error(e.message ?: "내보내기에 실패했습니다.")
@@ -282,8 +290,8 @@ class PlaybackViewModel(
         _exportState.value = ExportState.Idle
     }
 
-    private fun saveToGallery(context: Context, file: File): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+    private fun saveToGallery(context: Context, file: File): Uri? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
         val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, file.name)
@@ -291,12 +299,19 @@ class PlaybackViewModel(
             put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/MyMap")
             put(MediaStore.Video.Media.IS_PENDING, 1)
         }
-        val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return false
-        resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } } ?: return false
-        values.clear()
-        values.put(MediaStore.Video.Media.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
-        return true
+        val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return null
+        return try {
+            resolver.openOutputStream(uri)?.use { out ->
+                file.inputStream().use { it.copyTo(out) }
+            } ?: error("Gallery output stream is unavailable")
+            values.clear()
+            values.put(MediaStore.Video.Media.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            uri
+        } catch (e: Exception) {
+            runCatching { resolver.delete(uri, null, null) }
+            throw e
+        }
     }
 
     private fun formatKm(meters: Float): String =

@@ -170,7 +170,13 @@ fun MapScreen(
                 permissionLauncher.launch(PermissionHelper.LOCATION_PERMISSIONS)
             }
             LocationPermissionState.RequestingNotificationPermission -> {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                // Android 13(API 33)+에서만 알림 런타임 권한이 존재한다.
+                // 하위 버전은 권한 상수가 없어도 알림 표시가 가능하므로 바로 허용 처리한다.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                } else {
+                    viewModel.onNotificationPermissionResult(granted = true)
+                }
             }
             LocationPermissionState.CheckLocationSettings -> {
                 checkLocationSettings(
@@ -566,10 +572,8 @@ private fun openPermissionSettingsSafely(
 
     for (intent in intents) {
         try {
-            if (intent.resolveActivity(context.packageManager) != null) {
-                launcher.launch(intent)
-                return
-            }
+            launcher.launch(intent)
+            return
         } catch (e: ActivityNotFoundException) {
             Logger.w(TAG, "Permission settings activity not found: ${intent.action}")
         } catch (e: SecurityException) {
@@ -586,7 +590,11 @@ private fun createPermissionSettingsIntents(context: Context): List<Intent> {
     // 지원하지 않는 기기에서는 앱 권한 목록, 마지막으로 앱 정보 화면으로 fallback한다.
     val locationPermissionIntent = Intent(ACTION_MANAGE_APP_PERMISSION).apply {
         putExtra(Intent.EXTRA_PACKAGE_NAME, context.packageName)
-        putExtra(EXTRA_PERMISSION_NAME, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        // Android 10(API 29)+에서만 백그라운드 위치가 별도 권한으로 분리된다.
+        // 이 함수는 보통 API 29+에서 호출되지만, 릴리즈 lint와 구형 기기 안전성을 위해 가드한다.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            putExtra(EXTRA_PERMISSION_NAME, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        }
     }
 
     val appPermissionsIntent = Intent(ACTION_MANAGE_APP_PERMISSIONS).apply {

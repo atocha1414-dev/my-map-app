@@ -21,7 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
@@ -217,7 +217,7 @@ fun SessionDetailScreen(
                             onClick = { viewModel.exportVideo() },
                             enabled = canPlay && exportState !is PlaybackViewModel.ExportState.Rendering
                         ) {
-                            Icon(Icons.Default.Movie, contentDescription = "영상 내보내기")
+                            Icon(Icons.Default.IosShare, contentDescription = "경로 영상 공유")
                         }
                     }
                 }
@@ -345,30 +345,82 @@ fun SessionDetailScreen(
         )
     }
 
-    // mp4 내보내기 — 완료 시 공유, 오류 시 알림
+    // mp4 내보내기 — 완료 시 사용자가 사진첩 보기/공유하기를 선택
     val exportContext = LocalContext.current
+    (exportState as? PlaybackViewModel.ExportState.Done)?.let { st ->
+        AlertDialog(
+            onDismissRequest = { viewModel.consumeExportResult() },
+            title = { Text(if (st.savedToGallery) "영상 저장 완료" else "영상 생성 완료") },
+            text = {
+                Text(
+                    if (st.savedToGallery) {
+                        "사진첩의 Movies/MyMap 폴더에 저장했어요. 바로 확인하거나 다른 앱으로 공유할 수 있습니다."
+                    } else {
+                        "영상 파일을 만들었어요. 이 기기에서는 사진첩 저장을 확인하지 못해 공유 파일로 열 수 있습니다."
+                    }
+                )
+            },
+            confirmButton = {
+                Row {
+                    TextButton(
+                        onClick = {
+                            openExportedVideo(exportContext, st.galleryUri ?: st.shareUri)
+                            viewModel.consumeExportResult()
+                        }
+                    ) {
+                        Text(if (st.savedToGallery) "사진첩에서 보기" else "영상 보기")
+                    }
+                    TextButton(
+                        onClick = {
+                            shareExportedVideo(exportContext, st.shareUri)
+                            viewModel.consumeExportResult()
+                        }
+                    ) {
+                        Text("공유하기")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.consumeExportResult() }) {
+                    Text("닫기")
+                }
+            }
+        )
+    }
+
     LaunchedEffect(exportState) {
         when (val st = exportState) {
-            is PlaybackViewModel.ExportState.Done -> {
-                Toast.makeText(
-                    exportContext,
-                    if (st.savedToGallery) "갤러리에 저장하고 공유합니다" else "영상을 공유합니다",
-                    Toast.LENGTH_SHORT
-                ).show()
-                val share = Intent(Intent.ACTION_SEND).apply {
-                    type = "video/mp4"
-                    putExtra(Intent.EXTRA_STREAM, st.shareUri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                runCatching { exportContext.startActivity(Intent.createChooser(share, "경로 영상 공유")) }
-                viewModel.consumeExportResult()
-            }
             is PlaybackViewModel.ExportState.Error -> {
                 Toast.makeText(exportContext, st.message, Toast.LENGTH_SHORT).show()
                 viewModel.consumeExportResult()
             }
             else -> Unit
         }
+    }
+}
+
+private fun openExportedVideo(context: android.content.Context, uri: android.net.Uri) {
+    val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "video/mp4")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching {
+        context.startActivity(Intent.createChooser(viewIntent, "영상 보기"))
+    }.onFailure {
+        Toast.makeText(context, "영상을 열 수 있는 앱을 찾지 못했습니다.", Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun shareExportedVideo(context: android.content.Context, uri: android.net.Uri) {
+    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "video/mp4"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching {
+        context.startActivity(Intent.createChooser(shareIntent, "경로 영상 공유"))
+    }.onFailure {
+        Toast.makeText(context, "영상을 공유할 수 있는 앱을 찾지 못했습니다.", Toast.LENGTH_SHORT).show()
     }
 }
 
