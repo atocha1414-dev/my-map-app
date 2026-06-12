@@ -267,15 +267,32 @@ class PlaybackViewModel(
         viewModelScope.launch {
             _exportState.value = ExportState.Rendering(0f)
             try {
+                // 이전 내보내기 캐시 정리(성공 시 삭제되지만 실패/구버전 잔여물 대비 안전망)
+                withContext(Dispatchers.IO) { pruneExportCache(app) }
+
                 val file = RouteVideoExporter(app).export(path, pts, bounds, title, subtitle) { pr ->
                     _exportState.value = ExportState.Rendering(pr)
                 }
                 val galleryUri = withContext(Dispatchers.IO) {
-                    runCatching { saveToGallery(app, file) }.getOrNull()
+                    runCatching {
+                        saveToGallery(
+                            context = app,
+                            file = file,
+                            dateTakenMillis = pts.first().timestampMillis,
+                            durationMillis = RouteVideoExporter.DURATION_SEC * 1000L
+                        )
+                    }.getOrNull()
                 }
-                val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
+                // 갤러리 저장에 성공하면 캐시 중복본을 지우고, 공유도 갤러리 URI를 재사용한다.
+                // (실패/구버전이면 캐시 파일을 FileProvider로 공유)
+                val shareUri = if (galleryUri != null) {
+                    withContext(Dispatchers.IO) { runCatching { file.delete() } }
+                    galleryUri
+                } else {
+                    FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
+                }
                 _exportState.value = ExportState.Done(
-                    shareUri = uri,
+                    shareUri = shareUri,
                     galleryUri = galleryUri,
                     savedToGallery = galleryUri != null
                 )
@@ -290,13 +307,23 @@ class PlaybackViewModel(
         _exportState.value = ExportState.Idle
     }
 
-    private fun saveToGallery(context: Context, file: File): Uri? {
+    private fun saveToGallery(
+        context: Context,
+        file: File,
+        dateTakenMillis: Long,
+        durationMillis: Long
+    ): Uri? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
         val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, file.name)
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
             put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/MyMap")
+            // 갤러리 타임라인 정렬·미리보기를 위한 메타데이터
+            put(MediaStore.Video.Media.DATE_TAKEN, dateTakenMillis)
+            put(MediaStore.Video.Media.DURATION, durationMillis)
+            put(MediaStore.Video.Media.WIDTH, RouteVideoExporter.WIDTH)
+            put(MediaStore.Video.Media.HEIGHT, RouteVideoExporter.HEIGHT)
             put(MediaStore.Video.Media.IS_PENDING, 1)
         }
         val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return null
@@ -312,6 +339,17 @@ class PlaybackViewModel(
             runCatching { resolver.delete(uri, null, null) }
             throw e
         }
+    }
+
+    /** 내보내기 캐시(cacheDir/exports)에 남아 있는 이전 mp4들을 정리한다. */
+    private fun pruneExportCache(context: Context) {
+        runCatching {
+            val dir = File(context.cacheDir, "exports")
+            if (!dir.isDirectory) return
+            dir.listFiles()?.forEach { f ->
+                if (f.isFile && f.name.endsWith(".mp4")) f.delete()
+            }
+        }.onFailure { Logger.w(TAG, "Failed to prune export cache") }
     }
 
     private fun formatKm(meters: Float): String =

@@ -660,10 +660,11 @@ class RouteVideoExporter(private val context: Context) {
         // 빠른 내보내기 프리셋.
         // 변경 이유: 기존 720x1280/24fps/15초는 360프레임을 JCodec으로 소프트웨어 인코딩해
         // 공유용 영상 생성 시간이 길었다. 540x960/12fps/10초로 줄여 총 프레임을 120장으로 낮춘다.
-        private const val WIDTH = 540
-        private const val HEIGHT = 960
+        // 갤러리(MediaStore) 메타데이터로 재사용하기 위해 출력 사양은 공개한다.
+        const val WIDTH = 540
+        const val HEIGHT = 960
         private const val FPS = 12
-        private const val DURATION_SEC = 10
+        const val DURATION_SEC = 10
         // 변경 이유: 장시간 기록은 수천~수만 포인트가 될 수 있는데, 공유용 10초 영상에서
         // 모든 포인트를 매 프레임 그리면 체감 대기 시간이 길다. 원본은 유지하고 내보내기 복사본만 줄인다.
         private const val MAX_EXPORT_POINTS = 900
