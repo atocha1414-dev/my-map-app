@@ -45,6 +45,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -78,6 +79,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -315,6 +317,102 @@ private fun SessionListContent(
     var viewMode by rememberSaveable { mutableStateOf(ViewMode.List) }
     val bgColor = MaterialTheme.colorScheme.background
 
+    // ----- 월별 달력 조회 상태 -----
+    val today = remember { CalendarDay.today() }
+    var dispYear by rememberSaveable { mutableStateOf(today.year) }
+    var dispMonth1 by rememberSaveable { mutableStateOf(today.month1) }
+    var selectionMode by rememberSaveable { mutableStateOf(CalendarSelectionMode.Single) }
+    var selectedDayInt by rememberSaveable { mutableStateOf(-1) }
+    var rangeStartInt by rememberSaveable { mutableStateOf(-1) }
+    var rangeEndInt by rememberSaveable { mutableStateOf(-1) }
+
+    val sessionsByDay = remember(sessions) { sessions.bucketByDay() }
+    val daysWithRecords = sessionsByDay.keys
+    val selectedDay = selectedDayInt.takeIf { it >= 0 }?.let { CalendarDay.fromInt(it) }
+    val rangeStart = rangeStartInt.takeIf { it >= 0 }?.let { CalendarDay.fromInt(it) }
+    val rangeEnd = rangeEndInt.takeIf { it >= 0 }?.let { CalendarDay.fromInt(it) }
+
+    // 최초/세션 변경 시 기본 선택일: 오늘(기록 있으면) 또는 가장 최근 기록일
+    LaunchedEffect(sessions) {
+        if (sessions.isNotEmpty() && selectedDayInt < 0 && rangeStartInt < 0) {
+            val def = if (today in daysWithRecords) today else daysWithRecords.maxOrNull()
+            if (def != null) {
+                selectedDayInt = def.toInt()
+                dispYear = def.year
+                dispMonth1 = def.month1
+            }
+        }
+    }
+    // 필터(날짜/기간/모드) 변경 시 편집 선택 초기화 — 보이지 않는 항목이 삭제되는 혼란 방지
+    LaunchedEffect(selectionMode, selectedDayInt, rangeStartInt, rangeEndInt) {
+        if (isEditMode) selectedIds = emptySet()
+    }
+
+    val visibleSessions = remember(sessions, selectionMode, selectedDayInt, rangeStartInt, rangeEndInt) {
+        when (selectionMode) {
+            CalendarSelectionMode.Single -> selectedDay?.let { sessionsByDay[it] }.orEmpty()
+            CalendarSelectionMode.Range -> when {
+                rangeStart != null && rangeEnd != null -> {
+                    val lo = minOf(rangeStart, rangeEnd)
+                    val hi = maxOf(rangeStart, rangeEnd)
+                    sessions.filter { CalendarDay.fromMillis(it.startedAtMillis) in lo..hi }
+                        .sortedByDescending { it.startedAtMillis }
+                }
+                rangeStart != null -> sessionsByDay[rangeStart].orEmpty()
+                else -> emptyList()
+            }
+        }
+    }
+    val visibleSections = remember(visibleSessions) {
+        visibleSessions
+            .groupBy { CalendarDay.fromMillis(it.startedAtMillis) }
+            .entries
+            .sortedByDescending { it.key }
+            .map { it.key to it.value }
+    }
+
+    val monthSessions = remember(sessions, dispYear, dispMonth1) {
+        sessions.filter {
+            val d = CalendarDay.fromMillis(it.startedAtMillis)
+            d.year == dispYear && d.month1 == dispMonth1
+        }
+    }
+    val monthDistanceText = remember(monthSessions) {
+        formatDistance(monthSessions.fold(0f) { acc, s -> acc + s.distanceMeters })
+    }
+
+    fun goPrevMonth() {
+        if (dispMonth1 == 1) { dispMonth1 = 12; dispYear -= 1 } else dispMonth1 -= 1
+    }
+    fun goNextMonth() {
+        if (dispMonth1 == 12) { dispMonth1 = 1; dispYear += 1 } else dispMonth1 += 1
+    }
+    fun handleDayClick(d: CalendarDay) {
+        when (selectionMode) {
+            CalendarSelectionMode.Single -> selectedDayInt = d.toInt()
+            CalendarSelectionMode.Range -> when {
+                rangeStartInt < 0 -> { rangeStartInt = d.toInt(); rangeEndInt = -1 }
+                rangeEndInt < 0 -> {
+                    val s = CalendarDay.fromInt(rangeStartInt)
+                    if (d < s) { rangeStartInt = d.toInt(); rangeEndInt = s.toInt() }
+                    else rangeEndInt = d.toInt()
+                }
+                else -> { rangeStartInt = d.toInt(); rangeEndInt = -1 }
+            }
+        }
+    }
+    fun handleModeChange(m: CalendarSelectionMode) {
+        selectionMode = m
+        if (m == CalendarSelectionMode.Range) {
+            rangeStartInt = -1; rangeEndInt = -1
+        } else if (selectedDayInt < 0) {
+            val def = if (today in daysWithRecords) today else daysWithRecords.maxOrNull()
+            if (def != null) {
+                selectedDayInt = def.toInt(); dispYear = def.year; dispMonth1 = def.month1
+            }
+        }
+    }
+
     BackHandler(enabled = isEditMode) {
         isEditMode = false
         selectedIds = emptySet()
@@ -340,31 +438,55 @@ private fun SessionListContent(
                 }
             }
             else -> {
+                val emptyMessage = when (selectionMode) {
+                    CalendarSelectionMode.Single ->
+                        selectedDay?.let { "${dayHeaderLabel(it, today)}\n기록이 없습니다." }
+                            ?: "날짜를 선택하세요."
+                    CalendarSelectionMode.Range -> when {
+                        rangeStart != null && rangeEnd != null -> "이 기간에는 기록이 없습니다."
+                        else -> "기간을 선택하세요\n(시작일·종료일을 차례로 탭)"
+                    }
+                }
+                val listPadding = PaddingValues(
+                    top = 72.dp,
+                    start = 16.dp,
+                    end = 16.dp,
+                    bottom = if (isEditMode) 80.dp else 16.dp
+                )
+                val calendarPanel: @Composable () -> Unit = {
+                    CalendarPanel(
+                        year = dispYear,
+                        month1 = dispMonth1,
+                        today = today,
+                        daysWithRecords = daysWithRecords,
+                        selectionMode = selectionMode,
+                        selectedDay = selectedDay,
+                        rangeStart = rangeStart,
+                        rangeEnd = rangeEnd,
+                        monthCount = monthSessions.size,
+                        monthDistanceText = monthDistanceText,
+                        onDayClick = { handleDayClick(it) },
+                        onPrevMonth = { goPrevMonth() },
+                        onNextMonth = { goNextMonth() },
+                        onModeChange = { handleModeChange(it) },
+                        onClearRange = { rangeStartInt = -1; rangeEndInt = -1 }
+                    )
+                }
                 if (viewMode == ViewMode.List) {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(
-                            top = 72.dp,
-                            start = 16.dp,
-                            end = 16.dp,
-                            bottom = if (isEditMode) 80.dp else 16.dp
-                        ),
+                        contentPadding = listPadding,
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        sessionGroups.forEach { group ->
-                            val isExpanded = group.label !in collapsedGroupLabels
-                            stickyHeader(key = "header_${group.label}") {
-                                DateSectionHeader(
-                                    label = group.label,
-                                    bgColor = bgColor,
-                                    isExpanded = isExpanded,
-                                    onToggle = {
-                                        onToggleGroupCollapsed(group.label)
-                                    }
-                                )
-                            }
-                            if (isExpanded) {
-                                items(group.sessions, key = { it.id }) { session ->
+                        item(key = "calendar") { calendarPanel() }
+                        if (visibleSessions.isEmpty()) {
+                            item(key = "empty") { RecordsEmpty(emptyMessage) }
+                        } else {
+                            visibleSections.forEach { (day, daySessions) ->
+                                item(key = "h_${day.toInt()}") {
+                                    RecordsSubheader("${dayHeaderLabel(day, today)} · ${daySessions.size}개")
+                                }
+                                items(daySessions, key = { it.id }) { session ->
                                     SessionCard(
                                         session = session,
                                         onCardClick = { onCardClick(session.id) },
@@ -391,29 +513,21 @@ private fun SessionListContent(
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(2),
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(
-                            top = 72.dp,
-                            start = 16.dp,
-                            end = 16.dp,
-                            bottom = if (isEditMode) 80.dp else 16.dp
-                        ),
+                        contentPadding = listPadding,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        sessionGroups.forEach { group ->
-                            val isExpanded = group.label !in collapsedGroupLabels
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                DateSectionHeader(
-                                    label = group.label,
-                                    bgColor = bgColor,
-                                    isExpanded = isExpanded,
-                                    onToggle = {
-                                        onToggleGroupCollapsed(group.label)
-                                    }
-                                )
+                        item(span = { GridItemSpan(maxLineSpan) }, key = "calendar") { calendarPanel() }
+                        if (visibleSessions.isEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }, key = "empty") {
+                                RecordsEmpty(emptyMessage)
                             }
-                            if (isExpanded) {
-                                gridItems(group.sessions, key = { it.id }) { session ->
+                        } else {
+                            visibleSections.forEach { (day, daySessions) ->
+                                item(span = { GridItemSpan(maxLineSpan) }, key = "h_${day.toInt()}") {
+                                    RecordsSubheader("${dayHeaderLabel(day, today)} · ${daySessions.size}개")
+                                }
+                                gridItems(daySessions, key = { it.id }) { session ->
                                     ThumbnailGridItem(
                                         session = session,
                                         onCardClick = { onCardClick(session.id) },
@@ -457,12 +571,13 @@ private fun SessionListContent(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (isEditMode) {
-                    val allSelected = sessions.isNotEmpty() && selectedIds.size == sessions.size
+                    val allSelected = visibleSessions.isNotEmpty() &&
+                        visibleSessions.all { it.id in selectedIds }
                     Checkbox(
                         checked = allSelected,
                         onCheckedChange = {
                             selectedIds = if (allSelected) emptySet()
-                            else sessions.map { it.id }.toSet()
+                            else visibleSessions.map { it.id }.toSet()
                         }
                     )
                 }
@@ -592,6 +707,112 @@ private fun SessionListContent(
             dismissButton = {
                 TextButton(onClick = { showBulkDeleteConfirm = false }) { Text("취소") }
             }
+        )
+    }
+}
+
+/** 달력 + 모드 토글 + 기간 표시 + 월 요약을 묶은 목록 상단 패널. */
+@Composable
+private fun CalendarPanel(
+    year: Int,
+    month1: Int,
+    today: CalendarDay,
+    daysWithRecords: Set<CalendarDay>,
+    selectionMode: CalendarSelectionMode,
+    selectedDay: CalendarDay?,
+    rangeStart: CalendarDay?,
+    rangeEnd: CalendarDay?,
+    monthCount: Int,
+    monthDistanceText: String,
+    onDayClick: (CalendarDay) -> Unit,
+    onPrevMonth: () -> Unit,
+    onNextMonth: () -> Unit,
+    onModeChange: (CalendarSelectionMode) -> Unit,
+    onClearRange: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        MonthCalendar(
+            year = year,
+            month1 = month1,
+            today = today,
+            daysWithRecords = daysWithRecords,
+            selectionMode = selectionMode,
+            selectedDay = selectedDay,
+            rangeStart = rangeStart,
+            rangeEnd = rangeEnd,
+            onDayClick = onDayClick,
+            onPrevMonth = onPrevMonth,
+            onNextMonth = onNextMonth
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CalendarModeToggle(mode = selectionMode, onChange = onModeChange)
+            Spacer(Modifier.width(12.dp))
+            if (selectionMode == CalendarSelectionMode.Range) {
+                when {
+                    rangeStart != null && rangeEnd != null -> {
+                        Text(
+                            text = rangeHeaderLabel(rangeStart, rangeEnd),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onClearRange) { Text("초기화") }
+                    }
+                    rangeStart != null -> Text(
+                        text = "종료일을 선택하세요",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    else -> Text(
+                        text = "시작일을 선택하세요",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        MonthSummary(count = monthCount, distanceText = monthDistanceText)
+        Spacer(Modifier.height(10.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
+}
+
+@Composable
+private fun RecordsSubheader(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp, bottom = 2.dp)
+    )
+}
+
+@Composable
+private fun RecordsEmpty(message: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 36.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
         )
     }
 }
