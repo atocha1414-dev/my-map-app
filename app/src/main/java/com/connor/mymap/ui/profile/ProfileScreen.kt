@@ -87,6 +87,7 @@ import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.domain.model.TrackingSession
 import com.connor.mymap.ui.footprints.FootprintsScreen
 import com.connor.mymap.ui.footprints.FootprintsViewModel
+import com.connor.mymap.util.Formats
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -1114,16 +1115,8 @@ private fun Stat(label: String, value: String) {
 
 private enum class ViewMode { List, Grid }
 
-private fun formatDate(millis: Long): String =
-    SimpleDateFormat("yyyy.MM.dd HH:mm", Locale.KOREA).format(Date(millis))
+private fun formatDate(millis: Long): String = Formats.dateTime(millis)
 
-private fun formatDistance(meters: Float): String =
-    if (meters >= 1_000f) "%.2f km".format(meters / 1_000f) else "${meters.toInt()} m"
+private fun formatDistance(meters: Float): String = Formats.distance(meters)
 
-private fun formatDuration(millis: Long): String {
-    val totalSeconds = millis / 1_000L
-    val h = totalSeconds / 3_600L
-    val m = (totalSeconds % 3_600L) / 60L
-    val s = totalSeconds % 60L
-    return if (h > 0L) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
-}
+private fun formatDuration(millis: Long): String = Formats.duration(millis)

@@ -16,6 +16,7 @@ import com.connor.mymap.data.local.MapFileStorage
 import com.connor.mymap.data.local.TrackingHistoryStorage
 import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.util.Constants
+import com.connor.mymap.util.Formats
 import com.connor.mymap.util.Logger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -261,7 +262,7 @@ class PlaybackViewModel(
         pause()
         val app = getApplication<Application>()
         val stats = TrackingCalculator.calculateStats(pts)
-        val title = SimpleDateFormat("yyyy.MM.dd HH:mm", Locale.KOREA).format(Date(pts.first().timestampMillis))
+        val title = Formats.dateTime(pts.first().timestampMillis)
         val subtitle = "${formatKm(stats.distanceMeters)} · ${formatExportDuration(stats.durationMillis)}"
 
         viewModelScope.launch {
@@ -352,14 +353,9 @@ class PlaybackViewModel(
         }.onFailure { Logger.w(TAG, "Failed to prune export cache") }
     }
 
-    private fun formatKm(meters: Float): String =
-        if (meters >= 1_000f) "%.2f km".format(meters / 1_000f) else "${meters.toInt()} m"
+    private fun formatKm(meters: Float): String = Formats.distance(meters)
 
-    private fun formatExportDuration(millis: Long): String {
-        val s = millis / 1_000L
-        val h = s / 3_600L; val m = (s % 3_600L) / 60L; val sec = s % 60L
-        return if (h > 0L) "%d:%02d:%02d".format(h, m, sec) else "%02d:%02d".format(m, sec)
-    }
+    private fun formatExportDuration(millis: Long): String = Formats.duration(millis)
 
     override fun onCleared() {
         super.onCleared()

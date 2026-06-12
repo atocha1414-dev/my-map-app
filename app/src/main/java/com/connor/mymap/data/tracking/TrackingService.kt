@@ -19,6 +19,7 @@ import androidx.core.content.ContextCompat
 import com.connor.mymap.MainActivity
 import com.connor.mymap.R
 import com.connor.mymap.data.local.TrackingStorage
+import com.connor.mymap.util.Formats
 import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.util.Logger
 import com.connor.mymap.util.TrackingCalculator
@@ -292,25 +293,9 @@ class TrackingService : Service() {
         return "$frame ${formatDistance(totalDistanceMeters)} · ${formatDuration(elapsedMillis)}"
     }
 
-    private fun formatDistance(distanceMeters: Float): String {
-        return if (distanceMeters >= 1_000f) {
-            String.format(Locale.KOREA, "%.2fkm", distanceMeters / 1_000f)
-        } else {
-            "${distanceMeters.toInt()}m"
-        }
-    }
+    private fun formatDistance(distanceMeters: Float): String = Formats.distance(distanceMeters)
 
-    private fun formatDuration(durationMillis: Long): String {
-        val totalSeconds = durationMillis / 1_000L
-        val hours = totalSeconds / 3_600L
-        val minutes = (totalSeconds % 3_600L) / 60L
-        val seconds = totalSeconds % 60L
-        return if (hours > 0L) {
-            String.format(Locale.KOREA, "%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            String.format(Locale.KOREA, "%02d:%02d", minutes, seconds)
-        }
-    }
+    private fun formatDuration(durationMillis: Long): String = Formats.duration(durationMillis)
 
     private fun distanceBetween(from: TrackingPoint, to: TrackingPoint): Float {
         val results = FloatArray(1)

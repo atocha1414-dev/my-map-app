@@ -55,6 +55,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.connor.mymap.ui.common.ErrorView
 import com.connor.mymap.util.PermissionHelper
+import com.connor.mymap.util.Formats
 import com.connor.mymap.util.Logger
 import com.connor.mymap.util.TrackingCalculator
 import com.google.android.gms.common.api.ResolvableApiException
@@ -504,31 +505,11 @@ private fun TrackingStatsPanel(
     }
 }
 
-private fun formatDistance(distanceMeters: Float): String {
-    return if (distanceMeters >= 1_000f) {
-        "%.2f km".format(distanceMeters / 1_000f)
-    } else {
-        "${distanceMeters.toInt()} m"
-    }
-}
+private fun formatDistance(distanceMeters: Float): String = Formats.distance(distanceMeters)
 
-private fun formatDuration(durationMillis: Long): String {
-    val totalSeconds = durationMillis / 1_000L
-    val hours = totalSeconds / 3_600L
-    val minutes = (totalSeconds % 3_600L) / 60L
-    val seconds = totalSeconds % 60L
+private fun formatDuration(durationMillis: Long): String = Formats.duration(durationMillis)
 
-    return if (hours > 0L) {
-        "%d:%02d:%02d".format(hours, minutes, seconds)
-    } else {
-        "%02d:%02d".format(minutes, seconds)
-    }
-}
-
-private fun formatSpeed(speedMetersPerSecond: Float): String {
-    val kmh = speedMetersPerSecond * 3.6f
-    return "%.1f km/h".format(kmh)
-}
+private fun formatSpeed(speedMetersPerSecond: Float): String = Formats.speed(speedMetersPerSecond)
 
 @Composable
 private fun BackgroundLocationPermissionDialog(

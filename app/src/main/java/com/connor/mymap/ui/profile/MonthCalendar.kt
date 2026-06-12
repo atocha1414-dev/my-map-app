@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.connor.mymap.domain.model.TrackingSession
+import com.connor.mymap.util.Formats
 import java.util.Calendar
 
 /**
@@ -70,8 +71,6 @@ enum class CalendarSelectionMode { Single, Range }
 /** 세션을 시작 시각 기준 '하루' 단위로 묶는다. */
 fun List<TrackingSession>.bucketByDay(): Map<CalendarDay, List<TrackingSession>> =
     groupBy { CalendarDay.fromMillis(it.startedAtMillis) }
-
-private val WEEKDAY_LABELS = listOf("일", "월", "화", "수", "목", "금", "토")
 
 /**
  * 월 달력 격자.
@@ -121,7 +120,7 @@ fun MonthCalendar(
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "이전 달")
             }
             Text(
-                text = "${year}년 ${month1}월",
+                text = Formats.monthYear(year, month1),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
@@ -132,14 +131,15 @@ fun MonthCalendar(
             }
         }
 
-        // 요일 라벨 (일=빨강, 토=파랑)
+        // 요일 라벨 (locale 기준, 일=빨강·토=파랑)
+        val weekdayHeaders = remember { Formats.weekdayHeaders() }
         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
-            WEEKDAY_LABELS.forEachIndexed { i, label ->
+            weekdayHeaders.forEach { (label, dow) ->
                 Text(
                     text = label,
                     style = MaterialTheme.typography.labelSmall,
                     textAlign = TextAlign.Center,
-                    color = weekdayColor(i),
+                    color = weekdayColorForDow(dow),
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -295,22 +295,12 @@ fun MonthSummary(count: Int, distanceText: String, modifier: Modifier = Modifier
     )
 }
 
-/** "6월 12일 (오늘)" 형태의 날짜 헤더 라벨. */
-fun dayHeaderLabel(day: CalendarDay, today: CalendarDay): String {
-    val weekday = WEEKDAY_LABELS[weekdayIndexOf(day)]
-    val suffix = when (daysBetween(day, today)) {
-        0L -> " · 오늘"
-        1L -> " · 어제"
-        else -> ""
-    }
-    return "${day.month1}월 ${day.day}일 ($weekday)$suffix"
-}
+/** "6월 12일 (금) · 오늘" / "Jun 12 (Fri) · Today" 형태의 날짜 헤더 라벨(locale). */
+fun dayHeaderLabel(day: CalendarDay, today: CalendarDay): String =
+    Formats.dayHeader(day.toMillis(), today.toMillis())
 
-fun rangeHeaderLabel(start: CalendarDay, end: CalendarDay): String {
-    val lo = minOf(start, end)
-    val hi = maxOf(start, end)
-    return "${lo.year}.${lo.month1}.${lo.day} ~ ${hi.year}.${hi.month1}.${hi.day}"
-}
+fun rangeHeaderLabel(start: CalendarDay, end: CalendarDay): String =
+    Formats.rangeLabel(start.toMillis(), end.toMillis())
 
 // ---- 내부 헬퍼 ----
 
@@ -323,7 +313,8 @@ private fun buildMonthCells(year: Int, month1: Int): List<CalendarDay?> {
     }
     val firstDow = cal.get(Calendar.DAY_OF_WEEK) // 1=일요일
     val daysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-    val leading = firstDow - 1
+    val weekStart = Formats.firstDayOfWeek() // locale 주 시작 요일
+    val leading = (firstDow - weekStart + 7) % 7
 
     return buildList {
         repeat(leading) { add(null) }
@@ -340,19 +331,9 @@ private fun CalendarDay.toMillis(): Long =
         set(Calendar.DAY_OF_MONTH, day)
     }.timeInMillis
 
-private fun weekdayIndexOf(day: CalendarDay): Int {
-    val cal = Calendar.getInstance().apply { timeInMillis = day.toMillis() }
-    return cal.get(Calendar.DAY_OF_WEEK) - 1 // 0=일
-}
-
-private fun daysBetween(a: CalendarDay, b: CalendarDay): Long {
-    val dayMs = 24L * 60L * 60L * 1000L
-    return kotlin.math.abs(b.toMillis() - a.toMillis()) / dayMs
-}
-
 @Composable
-private fun weekdayColor(index: Int): Color = when (index) {
-    0 -> Color(0xFFD9534F) // 일요일 빨강
-    6 -> Color(0xFF1F6FEB) // 토요일 파랑
+private fun weekdayColorForDow(dow: Int): Color = when (dow) {
+    Calendar.SUNDAY -> Color(0xFFD9534F) // 일요일 빨강
+    Calendar.SATURDAY -> Color(0xFF1F6FEB) // 토요일 파랑
     else -> MaterialTheme.colorScheme.onSurfaceVariant
 }
