@@ -14,7 +14,16 @@ import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.opengl.EGL14
+import android.opengl.EGLConfig
+import android.opengl.EGLContext
+import android.opengl.EGLDisplay
+import android.opengl.EGLExt
+import android.opengl.EGLSurface
+import android.opengl.GLES20
+import android.opengl.GLUtils
 import android.os.Build
+import android.view.Surface
 import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.util.Logger
 import com.connor.mymap.util.buildOfflineMapStyle
@@ -31,6 +40,9 @@ import org.maplibre.android.snapshotter.MapSnapshot
 import org.maplibre.android.snapshotter.MapSnapshotter
 import java.io.File
 import java.io.FileDescriptor
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.FloatBuffer
 import java.util.ArrayDeque
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -85,9 +97,7 @@ class RouteVideoExporter(private val context: Context) {
         require(points.size >= 2) { "재생할 포인트가 부족합니다." }
         val prep = prepareFrames(mapFilePath, points, bounds, title, subtitle, onProgress)
         try {
-            val encoder = HardwareFrameEncoder(
-                MuxerTarget.Fd(output), prep.width, prep.height, FPS, VIDEO_BIT_RATE
-            )
+            val encoder = createHardwareEncoder(MuxerTarget.Fd(output), prep.width, prep.height)
             encodeFramesWith(
                 encoder = encoder,
                 frame = prep.frame,
@@ -154,15 +164,22 @@ class RouteVideoExporter(private val context: Context) {
         }
     }
 
+    /** 하드웨어 인코더 생성: Surface(GPU 색변환) 우선, 실패 시 바이트버퍼(소프트웨어 YUV)로 폴백. */
+    private fun createHardwareEncoder(target: MuxerTarget, width: Int, height: Int): FrameEncoder =
+        runCatching {
+            SurfaceFrameEncoder(target, width, height, FPS, VIDEO_BIT_RATE) as FrameEncoder
+        }.getOrElse { surfaceError ->
+            Logger.w(TAG, "Surface encoder unavailable, trying byte-buffer encoder", surfaceError)
+            HardwareFrameEncoder(target, width, height, FPS, VIDEO_BIT_RATE)
+        }
+
     private fun encodeFrames(
         outFile: File,
         prep: FramePrep,
         onProgress: (Float) -> Unit
     ) {
         val hardwareEncoder = runCatching {
-            HardwareFrameEncoder(
-                MuxerTarget.FilePath(outFile.absolutePath), prep.width, prep.height, FPS, VIDEO_BIT_RATE
-            )
+            createHardwareEncoder(MuxerTarget.FilePath(outFile.absolutePath), prep.width, prep.height)
         }.getOrElse { error ->
             Logger.w(TAG, "Hardware video encoder unavailable, falling back to JCodec", error)
             null
@@ -433,12 +450,6 @@ class RouteVideoExporter(private val context: Context) {
         canvas.drawPath(path, paint)
     }
 
-    /** MediaMuxer 출력 대상: 캐시 파일 경로 또는 (MediaStore 등) FileDescriptor. */
-    private sealed interface MuxerTarget {
-        data class FilePath(val path: String) : MuxerTarget
-        data class Fd(val fileDescriptor: FileDescriptor) : MuxerTarget
-    }
-
     private interface FrameEncoder {
         fun encodeFrame(frame: Bitmap, presentationTimeUs: Long)
         fun finish()
@@ -621,15 +632,6 @@ class RouteVideoExporter(private val context: Context) {
 
         private fun Int.clampedByte(): Byte = coerceIn(0, 255).toByte()
 
-        private fun createMuxer(target: MuxerTarget): MediaMuxer = when (target) {
-            is MuxerTarget.FilePath ->
-                MediaMuxer(target.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            is MuxerTarget.Fd ->
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                    MediaMuxer(target.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-                else error("FileDescriptor muxer requires API 26+")
-        }
-
         companion object {
             fun isAvailable(): Boolean = selectHardwareEncoder() != null
 
@@ -658,6 +660,244 @@ class RouteVideoExporter(private val context: Context) {
                 MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Planar,
                 MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible
             )
+        }
+    }
+
+    /**
+     * MediaCodec input Surface(OpenGL ES2)로 인코딩한다.
+     * 프레임 Bitmap을 GL 텍스처로 올려 풀스크린 쿼드로 그리면 RGB→YUV 색변환을
+     * 드라이버/GPU가 처리한다(프레임마다의 소프트웨어 YUV 변환 제거).
+     */
+    private class SurfaceFrameEncoder(
+        target: MuxerTarget,
+        width: Int,
+        height: Int,
+        fps: Int,
+        bitRate: Int
+    ) : FrameEncoder {
+        private val codec = MediaCodec.createByCodecName(
+            selectSurfaceEncoder() ?: error("No surface AVC encoder")
+        )
+        private val bufferInfo = MediaCodec.BufferInfo()
+        private val inputSurface: Surface
+        private val muxer: MediaMuxer
+        private var trackIndex = -1
+        private var muxerStarted = false
+        private var finished = false
+
+        private var eglDisplay: EGLDisplay = EGL14.EGL_NO_DISPLAY
+        private var eglContext: EGLContext = EGL14.EGL_NO_CONTEXT
+        private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
+
+        private var program = 0
+        private var aPositionLoc = 0
+        private var aTexCoordLoc = 0
+        private var uTextureLoc = 0
+        private var textureId = 0
+        private val vertexBuffer = floatBufferOf(FULLSCREEN_QUAD)
+        private val texBuffer = floatBufferOf(TEX_COORDS)
+
+        init {
+            val format = MediaFormat.createVideoFormat(MIME_TYPE_AVC, width, height).apply {
+                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+                setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
+                setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, I_FRAME_INTERVAL_SECONDS)
+            }
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            inputSurface = codec.createInputSurface()
+            codec.start()
+
+            setupEgl(inputSurface)
+            program = buildProgram()
+            aPositionLoc = GLES20.glGetAttribLocation(program, "aPosition")
+            aTexCoordLoc = GLES20.glGetAttribLocation(program, "aTexCoord")
+            uTextureLoc = GLES20.glGetUniformLocation(program, "uTexture")
+            textureId = createTexture()
+            GLES20.glViewport(0, 0, width, height)
+
+            muxer = createMuxer(target)
+        }
+
+        override fun encodeFrame(frame: Bitmap, presentationTimeUs: Long) {
+            drainEncoder(endOfStream = false)
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+            GLES20.glUseProgram(program)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId)
+            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, frame, 0)
+            GLES20.glUniform1i(uTextureLoc, 0)
+            GLES20.glEnableVertexAttribArray(aPositionLoc)
+            GLES20.glVertexAttribPointer(aPositionLoc, 2, GLES20.GL_FLOAT, false, 0, vertexBuffer)
+            GLES20.glEnableVertexAttribArray(aTexCoordLoc)
+            GLES20.glVertexAttribPointer(aTexCoordLoc, 2, GLES20.GL_FLOAT, false, 0, texBuffer)
+            GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+            GLES20.glDisableVertexAttribArray(aPositionLoc)
+            GLES20.glDisableVertexAttribArray(aTexCoordLoc)
+            EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, presentationTimeUs * 1_000L)
+            EGL14.eglSwapBuffers(eglDisplay, eglSurface)
+            drainEncoder(endOfStream = false)
+        }
+
+        override fun finish() {
+            if (finished) return
+            finished = true
+            runCatching {
+                codec.signalEndOfInputStream()
+                drainEncoder(endOfStream = true)
+            }
+            runCatching { codec.stop() }
+            runCatching { codec.release() }
+            releaseEgl()
+            runCatching { inputSurface.release() }
+            if (muxerStarted) runCatching { muxer.stop() }
+            runCatching { muxer.release() }
+        }
+
+        private fun drainEncoder(endOfStream: Boolean) {
+            while (true) {
+                when (val outIndex = codec.dequeueOutputBuffer(bufferInfo, CODEC_TIMEOUT_US)) {
+                    MediaCodec.INFO_TRY_AGAIN_LATER -> if (!endOfStream) return
+                    MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        check(!muxerStarted) { "Output format changed twice" }
+                        trackIndex = muxer.addTrack(codec.outputFormat)
+                        muxer.start()
+                        muxerStarted = true
+                    }
+                    MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Unit
+                    else -> {
+                        if (outIndex < 0) continue
+                        val outBuf = codec.getOutputBuffer(outIndex) ?: error("Output buffer unavailable")
+                        if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) bufferInfo.size = 0
+                        if (bufferInfo.size > 0) {
+                            check(muxerStarted) { "Muxer has not started" }
+                            outBuf.position(bufferInfo.offset)
+                            outBuf.limit(bufferInfo.offset + bufferInfo.size)
+                            muxer.writeSampleData(trackIndex, outBuf, bufferInfo)
+                        }
+                        val eos = bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                        codec.releaseOutputBuffer(outIndex, false)
+                        if (eos) return
+                    }
+                }
+            }
+        }
+
+        private fun setupEgl(surface: Surface) {
+            eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
+            check(eglDisplay != EGL14.EGL_NO_DISPLAY) { "eglGetDisplay failed" }
+            val version = IntArray(2)
+            check(EGL14.eglInitialize(eglDisplay, version, 0, version, 1)) { "eglInitialize failed" }
+            val configAttribs = intArrayOf(
+                EGL14.EGL_RED_SIZE, 8,
+                EGL14.EGL_GREEN_SIZE, 8,
+                EGL14.EGL_BLUE_SIZE, 8,
+                EGL14.EGL_ALPHA_SIZE, 8,
+                EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
+                EGL_RECORDABLE_ANDROID, 1,
+                EGL14.EGL_NONE
+            )
+            val configs = arrayOfNulls<EGLConfig>(1)
+            val numConfigs = IntArray(1)
+            check(
+                EGL14.eglChooseConfig(eglDisplay, configAttribs, 0, configs, 0, 1, numConfigs, 0) &&
+                    numConfigs[0] > 0
+            ) { "eglChooseConfig failed" }
+            val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
+            eglContext = EGL14.eglCreateContext(eglDisplay, configs[0], EGL14.EGL_NO_CONTEXT, ctxAttribs, 0)
+            check(eglContext != EGL14.EGL_NO_CONTEXT) { "eglCreateContext failed" }
+            eglSurface = EGL14.eglCreateWindowSurface(eglDisplay, configs[0], surface, intArrayOf(EGL14.EGL_NONE), 0)
+            check(eglSurface != EGL14.EGL_NO_SURFACE) { "eglCreateWindowSurface failed" }
+            check(EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) { "eglMakeCurrent failed" }
+        }
+
+        private fun releaseEgl() {
+            if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
+                EGL14.eglMakeCurrent(
+                    eglDisplay, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT
+                )
+                if (eglSurface != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(eglDisplay, eglSurface)
+                if (eglContext != EGL14.EGL_NO_CONTEXT) EGL14.eglDestroyContext(eglDisplay, eglContext)
+                EGL14.eglReleaseThread()
+                EGL14.eglTerminate(eglDisplay)
+            }
+            eglDisplay = EGL14.EGL_NO_DISPLAY
+            eglContext = EGL14.EGL_NO_CONTEXT
+            eglSurface = EGL14.EGL_NO_SURFACE
+        }
+
+        private fun createTexture(): Int {
+            val ids = IntArray(1)
+            GLES20.glGenTextures(1, ids, 0)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+            return ids[0]
+        }
+
+        private fun buildProgram(): Int {
+            val v = compileShader(GLES20.GL_VERTEX_SHADER, VERTEX_SHADER)
+            val f = compileShader(GLES20.GL_FRAGMENT_SHADER, FRAGMENT_SHADER)
+            val p = GLES20.glCreateProgram()
+            GLES20.glAttachShader(p, v)
+            GLES20.glAttachShader(p, f)
+            GLES20.glLinkProgram(p)
+            val status = IntArray(1)
+            GLES20.glGetProgramiv(p, GLES20.GL_LINK_STATUS, status, 0)
+            check(status[0] == GLES20.GL_TRUE) { "program link failed: ${GLES20.glGetProgramInfoLog(p)}" }
+            GLES20.glDeleteShader(v)
+            GLES20.glDeleteShader(f)
+            return p
+        }
+
+        private fun compileShader(type: Int, src: String): Int {
+            val s = GLES20.glCreateShader(type)
+            GLES20.glShaderSource(s, src)
+            GLES20.glCompileShader(s)
+            val status = IntArray(1)
+            GLES20.glGetShaderiv(s, GLES20.GL_COMPILE_STATUS, status, 0)
+            check(status[0] == GLES20.GL_TRUE) { "shader compile failed: ${GLES20.glGetShaderInfoLog(s)}" }
+            return s
+        }
+
+        private fun floatBufferOf(data: FloatArray): FloatBuffer =
+            ByteBuffer.allocateDirect(data.size * 4).order(ByteOrder.nativeOrder())
+                .asFloatBuffer().apply { put(data); position(0) }
+
+        companion object {
+            private const val EGL_RECORDABLE_ANDROID = 0x3142
+
+            // 풀스크린 삼각형 스트립(x,y)와 텍스처 좌표(비트맵 위가 위로 오도록 V 반전).
+            private val FULLSCREEN_QUAD = floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
+            private val TEX_COORDS = floatArrayOf(0f, 1f, 1f, 1f, 0f, 0f, 1f, 0f)
+
+            private const val VERTEX_SHADER =
+                "attribute vec4 aPosition;\n" +
+                    "attribute vec2 aTexCoord;\n" +
+                    "varying vec2 vTexCoord;\n" +
+                    "void main() { gl_Position = aPosition; vTexCoord = aTexCoord; }\n"
+            private const val FRAGMENT_SHADER =
+                "precision mediump float;\n" +
+                    "varying vec2 vTexCoord;\n" +
+                    "uniform sampler2D uTexture;\n" +
+                    "void main() { gl_FragColor = texture2D(uTexture, vTexCoord); }\n"
+
+            private fun selectSurfaceEncoder(): String? {
+                val list = MediaCodecList(MediaCodecList.REGULAR_CODECS)
+                for (info in list.codecInfos) {
+                    if (!info.isEncoder) continue
+                    if (info.supportedTypes.none { it.equals(MIME_TYPE_AVC, ignoreCase = true) }) continue
+                    val caps = runCatching { info.getCapabilitiesForType(MIME_TYPE_AVC) }.getOrNull() ?: continue
+                    if (caps.colorFormats.any { it == MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface }) {
+                        return info.name
+                    }
+                }
+                return null
+            }
+
+            fun isAvailable(): Boolean = selectSurfaceEncoder() != null
         }
     }
 
@@ -721,8 +961,9 @@ class RouteVideoExporter(private val context: Context) {
     }
 
     companion object {
-        /** 바이트버퍼 AVC 하드웨어 인코더 사용 가능 여부(직접 mux 경로 선택용). */
-        fun hasHardwareEncoder(): Boolean = HardwareFrameEncoder.isAvailable()
+        /** 하드웨어 AVC 인코더(Surface 또는 바이트버퍼) 사용 가능 여부(직접 mux 경로 선택용). */
+        fun hasHardwareEncoder(): Boolean =
+            SurfaceFrameEncoder.isAvailable() || HardwareFrameEncoder.isAvailable()
 
         private const val TAG = "RouteVideoExporter"
         private const val MIME_TYPE_AVC = "video/avc"
@@ -760,4 +1001,19 @@ private class NoOverlayMapSnapshotter(
     options: MapSnapshotter.Options
 ) : MapSnapshotter(context, options) {
     override fun addOverlay(mapSnapshot: MapSnapshot) = Unit
+}
+
+/** MediaMuxer 출력 대상: 캐시 파일 경로 또는 (MediaStore 등) FileDescriptor. */
+private sealed interface MuxerTarget {
+    data class FilePath(val path: String) : MuxerTarget
+    data class Fd(val fileDescriptor: FileDescriptor) : MuxerTarget
+}
+
+private fun createMuxer(target: MuxerTarget): MediaMuxer = when (target) {
+    is MuxerTarget.FilePath ->
+        MediaMuxer(target.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+    is MuxerTarget.Fd ->
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            MediaMuxer(target.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        else error("FileDescriptor muxer requires API 26+")
 }
