@@ -14,6 +14,7 @@ import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.os.Build
 import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.util.Logger
 import com.connor.mymap.util.buildOfflineMapStyle
@@ -29,6 +30,7 @@ import org.maplibre.android.maps.Style
 import org.maplibre.android.snapshotter.MapSnapshot
 import org.maplibre.android.snapshotter.MapSnapshotter
 import java.io.File
+import java.io.FileDescriptor
 import java.util.ArrayDeque
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -44,6 +46,7 @@ import kotlin.math.sqrt
  */
 class RouteVideoExporter(private val context: Context) {
 
+    /** 렌더 결과를 캐시 mp4 파일로 저장하고 그 File을 반환한다(하드웨어→JCodec 폴백). */
     suspend fun export(
         mapFilePath: String,
         points: List<TrackingPoint>,
@@ -53,7 +56,64 @@ class RouteVideoExporter(private val context: Context) {
         onProgress: (Float) -> Unit,
     ): File = withContext(Dispatchers.Default) {
         require(points.size >= 2) { "재생할 포인트가 부족합니다." }
+        val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+        val outFile = File(dir, "mymap_route_${System.currentTimeMillis()}.mp4")
+        val prep = prepareFrames(mapFilePath, points, bounds, title, subtitle, onProgress)
+        try {
+            encodeFrames(outFile, prep, onProgress)
+        } finally {
+            prep.recycle()
+        }
+        onProgress(1f)
+        outFile
+    }
 
+    /**
+     * 렌더 결과를 MediaStore 등의 FileDescriptor에 바로 mux 한다(하드웨어 인코더 전용).
+     * 캐시 파일·복사 단계 없이 갤러리에 직접 기록하기 위한 경로.
+     * 하드웨어 AVC 인코더가 없으면 예외를 던진다(호출부에서 파일 경로로 폴백).
+     */
+    suspend fun exportToFileDescriptor(
+        output: FileDescriptor,
+        mapFilePath: String,
+        points: List<TrackingPoint>,
+        bounds: LatLngBounds,
+        title: String,
+        subtitle: String,
+        onProgress: (Float) -> Unit,
+    ): Unit = withContext(Dispatchers.Default) {
+        require(points.size >= 2) { "재생할 포인트가 부족합니다." }
+        val prep = prepareFrames(mapFilePath, points, bounds, title, subtitle, onProgress)
+        try {
+            val encoder = HardwareFrameEncoder(
+                MuxerTarget.Fd(output), prep.width, prep.height, FPS, VIDEO_BIT_RATE
+            )
+            encodeFramesWith(
+                encoder = encoder,
+                frame = prep.frame,
+                canvas = prep.canvas,
+                staticFrameBase = prep.staticFrameBase,
+                points = prep.points,
+                px = prep.px,
+                startTimeMillis = prep.startTimeMillis,
+                totalMillis = prep.totalMillis,
+                onProgress = onProgress
+            )
+        } finally {
+            prep.recycle()
+        }
+        onProgress(1f)
+    }
+
+    /** 지도 스냅샷 + 경로 투영 + 정적 프레임 베이스까지 준비한다(두 export 경로 공용). */
+    private suspend fun prepareFrames(
+        mapFilePath: String,
+        points: List<TrackingPoint>,
+        bounds: LatLngBounds,
+        title: String,
+        subtitle: String,
+        onProgress: (Float) -> Unit,
+    ): FramePrep {
         onProgress(0.02f)
         // 1) 경로 전체에 맞춘 지도 스냅샷
         val snapshot = takeSnapshot(mapFilePath, bounds, WIDTH, HEIGHT)
@@ -71,46 +131,38 @@ class RouteVideoExporter(private val context: Context) {
         val t0 = exportPoints.first().timestampMillis
         val totalMs = (exportPoints.last().timestampMillis - t0).coerceAtLeast(1L)
 
-        // 3) 프레임 렌더 + 인코딩
-        val dir = File(context.cacheDir, "exports").apply { mkdirs() }
-        val outFile = File(dir, "mymap_route_${System.currentTimeMillis()}.mp4")
         val frame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(frame)
         val staticFrameBase = buildStaticFrameBase(base, exportPoints, px, title, subtitle, w, h)
+        return FramePrep(w, h, frame, canvas, staticFrameBase, exportPoints, px, t0, totalMs)
+    }
 
-        try {
-            encodeFrames(
-                outFile = outFile,
-                frame = frame,
-                canvas = canvas,
-                staticFrameBase = staticFrameBase,
-                points = exportPoints,
-                px = px,
-                startTimeMillis = t0,
-                totalMillis = totalMs,
-                onProgress = onProgress
-            )
-        } finally {
+    private class FramePrep(
+        val width: Int,
+        val height: Int,
+        val frame: Bitmap,
+        val canvas: Canvas,
+        val staticFrameBase: Bitmap,
+        val points: List<TrackingPoint>,
+        val px: List<PointF>,
+        val startTimeMillis: Long,
+        val totalMillis: Long,
+    ) {
+        fun recycle() {
             staticFrameBase.recycle()
             frame.recycle()
         }
-        onProgress(1f)
-        outFile
     }
 
     private fun encodeFrames(
         outFile: File,
-        frame: Bitmap,
-        canvas: Canvas,
-        staticFrameBase: Bitmap,
-        points: List<TrackingPoint>,
-        px: List<PointF>,
-        startTimeMillis: Long,
-        totalMillis: Long,
+        prep: FramePrep,
         onProgress: (Float) -> Unit
     ) {
         val hardwareEncoder = runCatching {
-            HardwareFrameEncoder(outFile, frame.width, frame.height, FPS, VIDEO_BIT_RATE)
+            HardwareFrameEncoder(
+                MuxerTarget.FilePath(outFile.absolutePath), prep.width, prep.height, FPS, VIDEO_BIT_RATE
+            )
         }.getOrElse { error ->
             Logger.w(TAG, "Hardware video encoder unavailable, falling back to JCodec", error)
             null
@@ -120,13 +172,13 @@ class RouteVideoExporter(private val context: Context) {
             try {
                 encodeFramesWith(
                     encoder = hardwareEncoder,
-                    frame = frame,
-                    canvas = canvas,
-                    staticFrameBase = staticFrameBase,
-                    points = points,
-                    px = px,
-                    startTimeMillis = startTimeMillis,
-                    totalMillis = totalMillis,
+                    frame = prep.frame,
+                    canvas = prep.canvas,
+                    staticFrameBase = prep.staticFrameBase,
+                    points = prep.points,
+                    px = prep.px,
+                    startTimeMillis = prep.startTimeMillis,
+                    totalMillis = prep.totalMillis,
                     onProgress = onProgress
                 )
                 return
@@ -139,13 +191,13 @@ class RouteVideoExporter(private val context: Context) {
 
         encodeFramesWith(
             encoder = JCodecFrameEncoder(outFile, FPS),
-            frame = frame,
-            canvas = canvas,
-            staticFrameBase = staticFrameBase,
-            points = points,
-            px = px,
-            startTimeMillis = startTimeMillis,
-            totalMillis = totalMillis,
+            frame = prep.frame,
+            canvas = prep.canvas,
+            staticFrameBase = prep.staticFrameBase,
+            points = prep.points,
+            px = prep.px,
+            startTimeMillis = prep.startTimeMillis,
+            totalMillis = prep.totalMillis,
             onProgress = onProgress
         )
     }
@@ -381,6 +433,12 @@ class RouteVideoExporter(private val context: Context) {
         canvas.drawPath(path, paint)
     }
 
+    /** MediaMuxer 출력 대상: 캐시 파일 경로 또는 (MediaStore 등) FileDescriptor. */
+    private sealed interface MuxerTarget {
+        data class FilePath(val path: String) : MuxerTarget
+        data class Fd(val fileDescriptor: FileDescriptor) : MuxerTarget
+    }
+
     private interface FrameEncoder {
         fun encodeFrame(frame: Bitmap, presentationTimeUs: Long)
         fun finish()
@@ -402,7 +460,7 @@ class RouteVideoExporter(private val context: Context) {
     }
 
     private class HardwareFrameEncoder(
-        private val outFile: File,
+        target: MuxerTarget,
         private val width: Int,
         private val height: Int,
         private val fps: Int,
@@ -411,7 +469,7 @@ class RouteVideoExporter(private val context: Context) {
         private val codecConfig = selectHardwareEncoder()
             ?: error("No byte-buffer AVC encoder")
         private val codec = MediaCodec.createByCodecName(codecConfig.name)
-        private val muxer = MediaMuxer(outFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        private val muxer = createMuxer(target)
         private val bufferInfo = MediaCodec.BufferInfo()
         private val pixels = IntArray(width * height)
         private val yuv = ByteArray(width * height * 3 / 2)
@@ -563,7 +621,18 @@ class RouteVideoExporter(private val context: Context) {
 
         private fun Int.clampedByte(): Byte = coerceIn(0, 255).toByte()
 
+        private fun createMuxer(target: MuxerTarget): MediaMuxer = when (target) {
+            is MuxerTarget.FilePath ->
+                MediaMuxer(target.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            is MuxerTarget.Fd ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                    MediaMuxer(target.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                else error("FileDescriptor muxer requires API 26+")
+        }
+
         companion object {
+            fun isAvailable(): Boolean = selectHardwareEncoder() != null
+
             private fun selectHardwareEncoder(): CodecConfig? {
                 val codecInfos = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
                 for (codecInfo in codecInfos) {
@@ -652,6 +721,9 @@ class RouteVideoExporter(private val context: Context) {
     }
 
     companion object {
+        /** 바이트버퍼 AVC 하드웨어 인코더 사용 가능 여부(직접 mux 경로 선택용). */
+        fun hasHardwareEncoder(): Boolean = HardwareFrameEncoder.isAvailable()
+
         private const val TAG = "RouteVideoExporter"
         private const val MIME_TYPE_AVC = "video/avc"
         private const val VIDEO_BIT_RATE = 1_200_000

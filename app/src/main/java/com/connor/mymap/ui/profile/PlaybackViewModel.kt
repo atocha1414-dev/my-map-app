@@ -271,32 +271,36 @@ class PlaybackViewModel(
                 // 이전 내보내기 캐시 정리(성공 시 삭제되지만 실패/구버전 잔여물 대비 안전망)
                 withContext(Dispatchers.IO) { pruneExportCache(app) }
 
-                val file = RouteVideoExporter(app).export(path, pts, bounds, title, subtitle) { pr ->
-                    _exportState.value = ExportState.Rendering(pr)
-                }
-                val galleryUri = withContext(Dispatchers.IO) {
-                    runCatching {
-                        saveToGallery(
-                            context = app,
-                            file = file,
-                            dateTakenMillis = pts.first().timestampMillis,
-                            durationMillis = RouteVideoExporter.DURATION_SEC * 1000L
-                        )
-                    }.getOrNull()
-                }
-                // 갤러리 저장에 성공하면 캐시 중복본을 지우고, 공유도 갤러리 URI를 재사용한다.
-                // (실패/구버전이면 캐시 파일을 FileProvider로 공유)
-                val shareUri = if (galleryUri != null) {
-                    withContext(Dispatchers.IO) { runCatching { file.delete() } }
-                    galleryUri
+                val dateTaken = pts.first().timestampMillis
+                val durationMs = RouteVideoExporter.DURATION_SEC * 1000L
+                val onPr: (Float) -> Unit = { pr -> _exportState.value = ExportState.Rendering(pr) }
+
+                // ① API 29+ & 하드웨어 인코더가 있으면 MediaStore FileDescriptor에 직접 mux
+                //    → 캐시 파일·복사 단계 자체가 사라진다.
+                val directUri: Uri? = if (
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                    RouteVideoExporter.hasHardwareEncoder()
+                ) {
+                    exportDirectToGallery(app, path, pts, bounds, title, subtitle, dateTaken, durationMs, onPr)
+                } else null
+
+                val done = if (directUri != null) {
+                    ExportState.Done(shareUri = directUri, galleryUri = directUri, savedToGallery = true)
                 } else {
-                    FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
+                    // 폴백: 캐시 파일로 렌더한 뒤 갤러리에 복사(구버전/하드웨어 미지원/직접 경로 실패)
+                    val file = RouteVideoExporter(app).export(path, pts, bounds, title, subtitle, onPr)
+                    val galleryUri = withContext(Dispatchers.IO) {
+                        runCatching { saveToGallery(app, file, dateTaken, durationMs) }.getOrNull()
+                    }
+                    val shareUri = if (galleryUri != null) {
+                        withContext(Dispatchers.IO) { runCatching { file.delete() } }
+                        galleryUri
+                    } else {
+                        FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
+                    }
+                    ExportState.Done(shareUri, galleryUri, savedToGallery = galleryUri != null)
                 }
-                _exportState.value = ExportState.Done(
-                    shareUri = shareUri,
-                    galleryUri = galleryUri,
-                    savedToGallery = galleryUri != null
-                )
+                _exportState.value = done
             } catch (e: Exception) {
                 Logger.e(TAG, "Video export failed", e)
                 _exportState.value = ExportState.Error(e.message ?: "내보내기에 실패했습니다.")
@@ -306,6 +310,57 @@ class PlaybackViewModel(
 
     fun consumeExportResult() {
         _exportState.value = ExportState.Idle
+    }
+
+    /**
+     * ① API 29+: MediaStore pending 항목을 만들고 그 FileDescriptor에 영상을 직접 mux.
+     * 캐시 파일·복사 단계 없이 갤러리에 바로 기록한다. 실패하면 항목을 지우고 null을 반환해
+     * 호출부가 파일 렌더 + 복사로 폴백하게 한다.
+     */
+    private suspend fun exportDirectToGallery(
+        context: Context,
+        mapFilePath: String,
+        points: List<TrackingPoint>,
+        bounds: org.maplibre.android.geometry.LatLngBounds,
+        title: String,
+        subtitle: String,
+        dateTakenMillis: Long,
+        durationMillis: Long,
+        onProgress: (Float) -> Unit
+    ): Uri? {
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, "mymap_route_${System.currentTimeMillis()}.mp4")
+            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/MyMap")
+            put(MediaStore.Video.Media.DATE_TAKEN, dateTakenMillis)
+            put(MediaStore.Video.Media.DURATION, durationMillis)
+            put(MediaStore.Video.Media.WIDTH, RouteVideoExporter.WIDTH)
+            put(MediaStore.Video.Media.HEIGHT, RouteVideoExporter.HEIGHT)
+            put(MediaStore.Video.Media.IS_PENDING, 1)
+        }
+        val uri = withContext(Dispatchers.IO) {
+            resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+        } ?: return null
+        return try {
+            withContext(Dispatchers.IO) {
+                resolver.openFileDescriptor(uri, "rw")?.use { pfd ->
+                    RouteVideoExporter(context).exportToFileDescriptor(
+                        pfd.fileDescriptor, mapFilePath, points, bounds, title, subtitle, onProgress
+                    )
+                } ?: error("MediaStore FileDescriptor unavailable")
+            }
+            withContext(Dispatchers.IO) {
+                values.clear()
+                values.put(MediaStore.Video.Media.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+            }
+            uri
+        } catch (e: Exception) {
+            Logger.w(TAG, "Direct-to-gallery export failed; falling back to file copy")
+            withContext(Dispatchers.IO) { runCatching { resolver.delete(uri, null, null) } }
+            null
+        }
     }
 
     private fun saveToGallery(
@@ -330,7 +385,7 @@ class PlaybackViewModel(
         val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return null
         return try {
             resolver.openOutputStream(uri)?.use { out ->
-                file.inputStream().use { it.copyTo(out) }
+                file.inputStream().use { it.copyTo(out, bufferSize = 1 shl 20) } // 1MB 버퍼
             } ?: error("Gallery output stream is unavailable")
             values.clear()
             values.put(MediaStore.Video.Media.IS_PENDING, 0)
