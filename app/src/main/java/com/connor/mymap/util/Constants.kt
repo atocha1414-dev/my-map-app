@@ -20,7 +20,7 @@ object Constants {
     object Network {
         const val CONNECT_TIMEOUT_SECONDS = 30L
         const val READ_TIMEOUT_SECONDS = 300L // 대용량 파일용
-        const val BUFFER_SIZE = 8192
+        const val BUFFER_SIZE = 65536 // 64KB: 대용량 다운로드 시 syscall 오버헤드 감소
     }
 
     // ═══ 지도 초기 위치 (서울 시청) ═══
