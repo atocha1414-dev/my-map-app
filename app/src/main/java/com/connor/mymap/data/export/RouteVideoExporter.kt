@@ -125,14 +125,13 @@ class RouteVideoExporter(private val context: Context) {
         onProgress: (Float) -> Unit,
     ): FramePrep {
         onProgress(0.02f)
-        // 1) 경로 전체에 맞춘 지도 스냅샷
-        val snapshot = takeSnapshot(mapFilePath, bounds, WIDTH, HEIGHT)
+        // 1) 경로 전체에 맞춘 지도 스냅샷 — 지도는 상단 MAP_HEIGHT 영역만 차지한다.
+        val snapshot = takeSnapshot(mapFilePath, bounds, WIDTH, MAP_HEIGHT)
         val base = snapshot.bitmap
-        val w = base.width
-        val h = base.height
         onProgress(0.10f)
 
         // 2) 모든 포인트의 화면 픽셀 좌표를 미리 투영한 뒤, 영상 렌더링용으로만 단순화한다.
+        //    (좌표는 MAP_HEIGHT 스냅샷 기준 = 프레임 상단 지도 영역과 동일)
         val originalPx = points.map { snapshot.pixelForLatLng(LatLng(it.latitude, it.longitude)) }
         val exportRoute = simplifyRouteForExport(points, originalPx)
         val exportPoints = exportRoute.points
@@ -141,10 +140,11 @@ class RouteVideoExporter(private val context: Context) {
         val t0 = exportPoints.first().timestampMillis
         val totalMs = (exportPoints.last().timestampMillis - t0).coerceAtLeast(1L)
 
-        val frame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        // 프레임은 전체 출력 크기(지도 영역 + 하단 캡션 바)
+        val frame = Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(frame)
-        val staticFrameBase = buildStaticFrameBase(base, exportPoints, px, title, subtitle, w, h)
-        return FramePrep(w, h, frame, canvas, staticFrameBase, exportPoints, px, t0, totalMs)
+        val staticFrameBase = buildStaticFrameBase(base, exportPoints, px, title, subtitle, WIDTH, HEIGHT)
+        return FramePrep(WIDTH, HEIGHT, frame, canvas, staticFrameBase, exportPoints, px, t0, totalMs)
     }
 
     private class FramePrep(
@@ -387,15 +387,15 @@ class RouteVideoExporter(private val context: Context) {
         canvas.drawCircle(px[0].x, px[0].y, 16f, startFill)
         canvas.drawCircle(px[0].x, px[0].y, 16f, markerRing)
 
-        // 캡션(하단)
-        val pad = 28f
-        val boxH = 132f
-        val box = RectF(pad, h - boxH - pad, w - pad, h - pad)
-        canvas.drawRoundRect(box, 28f, 28f, captionBg)
-        canvas.drawText(title, box.left + 30f, box.top + 54f, titlePaint)
-        canvas.drawText(subtitle, box.left + 30f, box.top + 102f, subtitlePaint)
-        // 워터마크
-        canvas.drawText("MyMap", w - pad - 22f, pad + 44f, watermarkPaint)
+        // 캡션 바(지도 아래, 지도와 겹치지 않는 별도 영역).
+        // 지도/경로보다 나중에 그려 경로가 바 영역으로 살짝 번지더라도 바가 덮는다.
+        val barTop = MAP_HEIGHT.toFloat()
+        canvas.drawRect(0f, barTop, w.toFloat(), h.toFloat(), captionBarPaint)
+        val pad = 30f
+        canvas.drawText(title, pad, barTop + 60f, titlePaint)
+        canvas.drawText(subtitle, pad, barTop + 108f, subtitlePaint)
+        // 워터마크(바 우측)
+        canvas.drawText("MyMap", w - pad, barTop + 94f, watermarkPaint)
         return staticFrameBase
     }
 
@@ -409,6 +409,10 @@ class RouteVideoExporter(private val context: Context) {
     ) {
         canvas.drawBitmap(staticFrameBase, 0f, 0f, null)
 
+        // 경로·head는 지도 영역 안에서만 그린다(하단 캡션 바를 침범하지 않도록 클립).
+        val save = canvas.save()
+        canvas.clipRect(0f, 0f, staticFrameBase.width.toFloat(), MAP_HEIGHT.toFloat())
+
         // 진행된 경로(진하게) + head까지
         drawRoute(canvas, points, px, 0, headIdx, head, brightPaint)
 
@@ -416,6 +420,8 @@ class RouteVideoExporter(private val context: Context) {
         canvas.drawCircle(head.x, head.y, 22f, headHalo)
         canvas.drawCircle(head.x, head.y, 13f, headFill)
         canvas.drawCircle(head.x, head.y, 13f, markerRing)
+
+        canvas.restoreToCount(save)
     }
 
     /** points[from..to] 구간을 세그먼트 경계를 끊어 그린다. head가 있으면 마지막에 이어 그린다. */
@@ -947,7 +953,7 @@ class RouteVideoExporter(private val context: Context) {
     }
     private val headFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#1A73E8") }
     private val headHalo = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#331A73E8") }
-    private val captionBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#B3000000") }
+    private val captionBarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#16242E") }
     private val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE; textSize = 38f; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
@@ -976,6 +982,9 @@ class RouteVideoExporter(private val context: Context) {
         // 갤러리(MediaStore) 메타데이터로 재사용하기 위해 출력 사양은 공개한다.
         const val WIDTH = 540
         const val HEIGHT = 960
+        // 지도는 위쪽 MAP_HEIGHT 영역에, 날짜·거리·시간 캡션 바는 그 아래 CAPTION_BAR_HEIGHT 영역에 둔다.
+        private const val CAPTION_BAR_HEIGHT = 150
+        private const val MAP_HEIGHT = HEIGHT - CAPTION_BAR_HEIGHT
         private const val FPS = 12
         const val DURATION_SEC = 10
         // 변경 이유: 장시간 기록은 수천~수만 포인트가 될 수 있는데, 공유용 10초 영상에서
