@@ -272,7 +272,8 @@ class PlaybackViewModel(
                 withContext(Dispatchers.IO) { pruneExportCache(app) }
 
                 val dateTaken = pts.first().timestampMillis
-                val durationMs = RouteVideoExporter.DURATION_SEC * 1000L
+                // 영상 길이는 기록 시간에 비례(내보내기 인코더와 동일 계산) → 갤러리 DURATION 메타데이터 일치.
+                val durationMs = RouteVideoExporter.videoDurationSec(stats.durationMillis) * 1000L
                 val onPr: (Float) -> Unit = { pr -> _exportState.value = ExportState.Rendering(pr) }
 
                 // ① API 29+ & 하드웨어 인코더가 있으면 MediaStore FileDescriptor에 직접 mux

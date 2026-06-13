@@ -97,7 +97,7 @@ class RouteVideoExporter(private val context: Context) {
         require(points.size >= 2) { "재생할 포인트가 부족합니다." }
         val prep = prepareFrames(mapFilePath, points, bounds, title, subtitle, onProgress)
         try {
-            val encoder = createHardwareEncoder(MuxerTarget.Fd(output), prep.width, prep.height)
+            val encoder = createHardwareEncoder(MuxerTarget.Fd(output), prep.width, prep.height, prep.bitRate)
             encodeFramesWith(
                 encoder = encoder,
                 frame = prep.frame,
@@ -144,7 +144,12 @@ class RouteVideoExporter(private val context: Context) {
         val frame = Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(frame)
         val staticFrameBase = buildStaticFrameBase(base, exportPoints, px, title, subtitle, WIDTH, HEIGHT)
-        return FramePrep(WIDTH, HEIGHT, frame, canvas, staticFrameBase, exportPoints, px, t0, totalMs)
+        // 영상 길이=실제 기록 시간, 비트레이트=길이에 따라 적응.
+        val durationSec = videoDurationSec(totalMs)
+        val bitRate = videoBitRate(durationSec)
+        return FramePrep(
+            WIDTH, HEIGHT, frame, canvas, staticFrameBase, exportPoints, px, t0, totalMs, durationSec, bitRate
+        )
     }
 
     private class FramePrep(
@@ -157,6 +162,8 @@ class RouteVideoExporter(private val context: Context) {
         val px: List<PointF>,
         val startTimeMillis: Long,
         val totalMillis: Long,
+        val durationSec: Int,
+        val bitRate: Int,
     ) {
         fun recycle() {
             staticFrameBase.recycle()
@@ -165,12 +172,17 @@ class RouteVideoExporter(private val context: Context) {
     }
 
     /** 하드웨어 인코더 생성: Surface(GPU 색변환) 우선, 실패 시 바이트버퍼(소프트웨어 YUV)로 폴백. */
-    private fun createHardwareEncoder(target: MuxerTarget, width: Int, height: Int): FrameEncoder =
+    private fun createHardwareEncoder(
+        target: MuxerTarget,
+        width: Int,
+        height: Int,
+        bitRate: Int
+    ): FrameEncoder =
         runCatching {
-            SurfaceFrameEncoder(target, width, height, FPS, VIDEO_BIT_RATE) as FrameEncoder
+            SurfaceFrameEncoder(target, width, height, FPS, bitRate) as FrameEncoder
         }.getOrElse { surfaceError ->
             Logger.w(TAG, "Surface encoder unavailable, trying byte-buffer encoder", surfaceError)
-            HardwareFrameEncoder(target, width, height, FPS, VIDEO_BIT_RATE)
+            HardwareFrameEncoder(target, width, height, FPS, bitRate)
         }
 
     private fun encodeFrames(
@@ -179,7 +191,7 @@ class RouteVideoExporter(private val context: Context) {
         onProgress: (Float) -> Unit
     ) {
         val hardwareEncoder = runCatching {
-            createHardwareEncoder(MuxerTarget.FilePath(outFile.absolutePath), prep.width, prep.height)
+            createHardwareEncoder(MuxerTarget.FilePath(outFile.absolutePath), prep.width, prep.height, prep.bitRate)
         }.getOrElse { error ->
             Logger.w(TAG, "Hardware video encoder unavailable, falling back to JCodec", error)
             null
@@ -230,7 +242,8 @@ class RouteVideoExporter(private val context: Context) {
         totalMillis: Long,
         onProgress: (Float) -> Unit
     ) {
-        val totalFrames = FPS * DURATION_SEC
+        // 기록 시간(totalMillis)에 비례한 영상 길이로 프레임 수 결정.
+        val totalFrames = FPS * videoDurationSec(totalMillis)
         var cursor = 0
         try {
             for (i in 0 until totalFrames) {
@@ -973,7 +986,6 @@ class RouteVideoExporter(private val context: Context) {
 
         private const val TAG = "RouteVideoExporter"
         private const val MIME_TYPE_AVC = "video/avc"
-        private const val VIDEO_BIT_RATE = 1_200_000
         private const val I_FRAME_INTERVAL_SECONDS = 1
         private const val CODEC_TIMEOUT_US = 10_000L
         // 빠른 내보내기 프리셋.
@@ -986,7 +998,31 @@ class RouteVideoExporter(private val context: Context) {
         private const val CAPTION_BAR_HEIGHT = 150
         private const val MAP_HEIGHT = HEIGHT - CAPTION_BAR_HEIGHT
         private const val FPS = 12
-        const val DURATION_SEC = 10
+
+        // 내보내기 영상은 기록한 실제 시간 그대로의 길이(실시간 재생)로 만든다.
+        // 50분을 기록하면 50분 영상이 된다. 너무 짧은 기록만 최소 길이로 보정한다.
+        private const val MIN_DURATION_SEC = 2
+
+        /**
+         * 내보내기 영상 길이(초) = 기록(이동) 실제 시간.
+         * 인코딩 프레임 수와 갤러리 DURATION 메타데이터가 같은 값을 쓰도록 공개한다.
+         */
+        fun videoDurationSec(recordedMillis: Long): Int =
+            ((recordedMillis + 500L) / 1000L).toInt().coerceAtLeast(MIN_DURATION_SEC)
+
+        // 화질 적응: 영상이 길수록 비트레이트를 낮춰 파일 크기를 일정 수준으로 묶는다.
+        // 목표 총량 약 125MB, 화질 하한 0.4Mbps·상한 1.2Mbps(기존 단편 화질).
+        // 예) ~14분=1.2Mbps(원화질), 50분≈0.4Mbps(약 150MB).
+        private const val MIN_VIDEO_BIT_RATE = 400_000
+        private const val MAX_VIDEO_BIT_RATE = 1_200_000
+        private const val TARGET_TOTAL_BITS = 1_000_000_000L
+
+        /** 영상 길이(초)에 따라 적응되는 비트레이트(bps). 짧은 영상은 원화질, 길수록 낮춘다. */
+        fun videoBitRate(durationSec: Int): Int =
+            if (durationSec <= 0) MAX_VIDEO_BIT_RATE
+            else (TARGET_TOTAL_BITS / durationSec)
+                .coerceIn(MIN_VIDEO_BIT_RATE.toLong(), MAX_VIDEO_BIT_RATE.toLong())
+                .toInt()
         // 변경 이유: 장시간 기록은 수천~수만 포인트가 될 수 있는데, 공유용 10초 영상에서
         // 모든 포인트를 매 프레임 그리면 체감 대기 시간이 길다. 원본은 유지하고 내보내기 복사본만 줄인다.
         private const val MAX_EXPORT_POINTS = 900
