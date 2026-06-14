@@ -1,8 +1,7 @@
 # 개인정보처리방침 / Privacy Policy
 
-**시행일 / Effective date:** 2026-05-08
-**앱 / App:** MyMap (com.connor.mymap)
-**개발자 / Developer:** Connor
+**시행일 / Effective date:** 2026-06-15
+**앱 / App:** 내경로 (MyMap) · com.yhgps.mymap
 
 ---
 
@@ -10,7 +9,7 @@
 
 ### 1. 수집하는 정보
 
-MyMap은 다음 정보를 사용자의 **기기 내부에만** 저장합니다.
+내경로(MyMap)는 다음 정보를 사용자의 **기기 내부에만** 저장합니다.
 
 - **위치 정보**: 위도·경도·정확도·시각. 사용자가 "기록 시작" 버튼을 눌렀을 때만 수집되며, "기록 정지"를 누르면 즉시 중단됩니다.
 - **이동 경로 기록**: 위 위치 데이터를 모은 트랙 파일과 미리보기 썸네일.
@@ -67,7 +66,7 @@ MyMap은 다음 정보를 사용자의 **기기 내부에만** 저장합니다.
 
 ### 1. Information We Collect
 
-MyMap stores the following information **only on the user's device**.
+내경로 (MyMap) stores the following information **only on the user's device**.
 
 - **Location data**: Latitude, longitude, accuracy, and timestamp. Collected only when the user presses "Start Recording" and stopped immediately when "Stop Recording" is pressed.
 - **Movement track records**: Track files and preview thumbnails generated from the above location data.
