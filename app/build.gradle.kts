@@ -21,7 +21,8 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.connor.mymap"
+        // 스토어에 노출되는 패키지명(게시 후 영구 고정). 내부 코드 패키지(namespace)와는 분리한다.
+        applicationId = "com.yhgps.mymap"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
