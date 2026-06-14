@@ -28,16 +28,27 @@ object RouteExportManager {
         return true
     }
 
+    // 진행 콜백은 "그 세션이 아직 Rendering일 때만" 반영한다.
+    // 취소(consume→Idle)나 완료 이후 늦게 도착하는 진행 업데이트가 상태를 되돌리는 race를 막는다.
+    @Synchronized
     fun updateProgress(sessionId: String, progress: Float) {
-        _snapshot.value = Snapshot(sessionId, ExportState.Rendering(progress))
+        val cur = _snapshot.value
+        if (cur.sessionId == sessionId && cur.state is ExportState.Rendering) {
+            _snapshot.value = Snapshot(sessionId, ExportState.Rendering(progress))
+        }
     }
 
-    /** 완료(Done) 또는 오류(Error) 상태로 마무리. */
+    /** 완료(Done)/오류(Error)로 마무리. 이미 취소된 세션이면 무시(Rendering일 때만 적용). */
+    @Synchronized
     fun finish(sessionId: String, state: ExportState) {
-        _snapshot.value = Snapshot(sessionId, state)
+        val cur = _snapshot.value
+        if (cur.sessionId == sessionId && cur.state is ExportState.Rendering) {
+            _snapshot.value = Snapshot(sessionId, state)
+        }
     }
 
-    /** 화면이 완료/오류 결과를 소비(닫기)하면 Idle로 되돌린다(해당 세션일 때만). */
+    /** 결과 소비(닫기) 또는 취소 시 Idle로 되돌린다(해당 세션일 때만). */
+    @Synchronized
     fun consume(sessionId: String) {
         if (_snapshot.value.sessionId == sessionId) {
             _snapshot.value = Snapshot(null, ExportState.Idle)

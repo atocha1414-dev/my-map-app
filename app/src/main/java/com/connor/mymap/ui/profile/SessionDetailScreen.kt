@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
@@ -330,8 +331,15 @@ fun SessionDetailScreen(
     // mp4 내보내기 — 진행 다이얼로그
     (exportState as? ExportState.Rendering)?.let { st ->
         AlertDialog(
-            onDismissRequest = { },
-            confirmButton = { },
+            // 뒤로가기로도 취소되게 한다(모달이 화면을 막아 멈춘 것처럼 보이던 문제 방지).
+            onDismissRequest = { viewModel.cancelExport() },
+            // 바깥 영역 탭으로 실수로 취소되지 않도록 (명시적 [취소] 버튼/뒤로가기로만).
+            properties = DialogProperties(dismissOnClickOutside = false),
+            confirmButton = {
+                TextButton(onClick = { viewModel.cancelExport() }) {
+                    Text("취소")
+                }
+            },
             title = { Text("영상 만드는 중") },
             text = {
                 Column {
@@ -340,7 +348,7 @@ fun SessionDetailScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.size(12.dp))
-                    Text("${(st.progress * 100).toInt()}%  ·  잠시만 기다려주세요")
+                    Text("${(st.progress * 100).toInt()}%  ·  취소하려면 아래 버튼을 누르세요")
                 }
             }
         )

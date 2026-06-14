@@ -40,6 +40,8 @@ class RouteExportService : Service() {
     private var exportJob: Job? = null
     @Volatile
     private var currentSessionId: String? = null
+    @Volatile
+    private var isCancelled = false
 
     override fun onCreate() {
         super.onCreate()
@@ -58,14 +60,16 @@ class RouteExportService : Service() {
             return START_NOT_STICKY
         }
         currentSessionId = sessionId
+        isCancelled = false
         // FGS는 시작 직후(5~10초 내) startForeground 필수.
         startForeground(NOTIFICATION_ID, buildProgressNotification(0f))
         exportJob = scope.launch { runExport(sessionId) }
         return START_NOT_STICKY
     }
 
-    /** 알림의 [취소]로 호출. 진행 중인 렌더를 중단하고 상태를 Idle로 되돌린 뒤 서비스를 종료한다. */
+    /** 알림 [취소] 또는 인앱 [취소]로 호출. 진행 중인 렌더를 중단하고 상태를 Idle로 되돌린 뒤 종료한다. */
     private fun cancelExport() {
+        isCancelled = true
         val sid = currentSessionId
         exportJob?.cancel()
         if (sid != null) RouteExportManager.consume(sid)
@@ -111,11 +115,14 @@ class RouteExportService : Service() {
                 subtitle = subtitle,
                 dateTakenMillis = dateTaken,
                 onProgress = { p ->
-                    RouteExportManager.updateProgress(sessionId, p)
-                    val pct = (p * 100).toInt()
-                    if (pct != lastNotifiedPct) {
-                        lastNotifiedPct = pct
-                        notificationManager.notify(NOTIFICATION_ID, buildProgressNotification(p))
+                    // 취소되면 더 이상 상태/알림을 갱신하지 않는다(취소 후 잔여 콜백 무시).
+                    if (!isCancelled) {
+                        RouteExportManager.updateProgress(sessionId, p)
+                        val pct = (p * 100).toInt()
+                        if (pct != lastNotifiedPct) {
+                            lastNotifiedPct = pct
+                            notificationManager.notify(NOTIFICATION_ID, buildProgressNotification(p))
+                        }
                     }
                 }
             )
@@ -242,6 +249,12 @@ class RouteExportService : Service() {
                 putExtra(EXTRA_SESSION_ID, sessionId)
             }
             ContextCompat.startForegroundService(context, intent)
+        }
+
+        /** 인앱 [취소] 등에서 진행 중인 내보내기를 중단시킨다(알림 [취소]와 동일 경로). */
+        fun cancel(context: Context) {
+            val intent = Intent(context, RouteExportService::class.java).setAction(ACTION_CANCEL)
+            runCatching { context.startService(intent) }
         }
     }
 }

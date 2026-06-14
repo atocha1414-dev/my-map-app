@@ -243,6 +243,11 @@ class PlaybackViewModel(
         RouteExportService.start(app, sessionId)
     }
 
+    /** 인앱 "영상 만드는 중" 다이얼로그의 [취소] / 뒤로가기에서 호출. 백그라운드 서비스와 동일 경로로 중단. */
+    fun cancelExport() {
+        RouteExportService.cancel(getApplication())
+    }
+
     fun consumeExportResult() {
         RouteExportManager.consume(sessionId)
     }
