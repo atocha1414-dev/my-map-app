@@ -16,6 +16,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 경로 영상 내보내기를 백그라운드(포그라운드 서비스)에서 수행 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
+
 
     <application
         android:allowBackup="false"
@@ -31,6 +34,12 @@
             android:name=".data.tracking.TrackingService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <!-- 경로 영상 내보내기(긴 영상은 오래 걸려 백그라운드 처리) -->
+        <service
+            android:name=".data.export.RouteExportService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProcessing" />
 
         <!-- 내보낸 mp4를 다른 앱(공유)에 안전하게 전달하기 위한 FileProvider -->
         <provider

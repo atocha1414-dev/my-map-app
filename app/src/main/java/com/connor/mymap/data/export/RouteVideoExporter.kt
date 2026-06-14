@@ -28,7 +28,9 @@ import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.util.Logger
 import com.connor.mymap.util.buildOfflineMapStyle
 import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.jcodec.api.android.AndroidSequenceEncoder
@@ -72,7 +74,7 @@ class RouteVideoExporter(private val context: Context) {
         val outFile = File(dir, "mymap_route_${System.currentTimeMillis()}.mp4")
         val prep = prepareFrames(mapFilePath, points, bounds, title, subtitle, onProgress)
         try {
-            encodeFrames(outFile, prep, onProgress)
+            encodeFrames(outFile, prep, isActive = { isActive }, onProgress = onProgress)
         } finally {
             prep.recycle()
         }
@@ -97,7 +99,9 @@ class RouteVideoExporter(private val context: Context) {
         require(points.size >= 2) { "재생할 포인트가 부족합니다." }
         val prep = prepareFrames(mapFilePath, points, bounds, title, subtitle, onProgress)
         try {
-            val encoder = createHardwareEncoder(MuxerTarget.Fd(output), prep.width, prep.height, prep.bitRate)
+            val encoder = createHardwareEncoder(
+                MuxerTarget.Fd(output), prep.width, prep.height, prep.fps, prep.bitRate
+            )
             encodeFramesWith(
                 encoder = encoder,
                 frame = prep.frame,
@@ -107,6 +111,8 @@ class RouteVideoExporter(private val context: Context) {
                 px = prep.px,
                 startTimeMillis = prep.startTimeMillis,
                 totalMillis = prep.totalMillis,
+                fps = prep.fps,
+                isActive = { isActive },
                 onProgress = onProgress
             )
         } finally {
@@ -144,11 +150,12 @@ class RouteVideoExporter(private val context: Context) {
         val frame = Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(frame)
         val staticFrameBase = buildStaticFrameBase(base, exportPoints, px, title, subtitle, WIDTH, HEIGHT)
-        // 영상 길이=실제 기록 시간, 비트레이트=길이에 따라 적응.
+        // 영상 길이=실제 기록 시간, FPS·비트레이트=길이에 따라 적응.
         val durationSec = videoDurationSec(totalMs)
+        val fps = videoFps(durationSec)
         val bitRate = videoBitRate(durationSec)
         return FramePrep(
-            WIDTH, HEIGHT, frame, canvas, staticFrameBase, exportPoints, px, t0, totalMs, durationSec, bitRate
+            WIDTH, HEIGHT, frame, canvas, staticFrameBase, exportPoints, px, t0, totalMs, durationSec, fps, bitRate
         )
     }
 
@@ -163,6 +170,7 @@ class RouteVideoExporter(private val context: Context) {
         val startTimeMillis: Long,
         val totalMillis: Long,
         val durationSec: Int,
+        val fps: Int,
         val bitRate: Int,
     ) {
         fun recycle() {
@@ -176,22 +184,26 @@ class RouteVideoExporter(private val context: Context) {
         target: MuxerTarget,
         width: Int,
         height: Int,
+        fps: Int,
         bitRate: Int
     ): FrameEncoder =
         runCatching {
-            SurfaceFrameEncoder(target, width, height, FPS, bitRate) as FrameEncoder
+            SurfaceFrameEncoder(target, width, height, fps, bitRate) as FrameEncoder
         }.getOrElse { surfaceError ->
             Logger.w(TAG, "Surface encoder unavailable, trying byte-buffer encoder", surfaceError)
-            HardwareFrameEncoder(target, width, height, FPS, bitRate)
+            HardwareFrameEncoder(target, width, height, fps, bitRate)
         }
 
     private fun encodeFrames(
         outFile: File,
         prep: FramePrep,
+        isActive: () -> Boolean,
         onProgress: (Float) -> Unit
     ) {
         val hardwareEncoder = runCatching {
-            createHardwareEncoder(MuxerTarget.FilePath(outFile.absolutePath), prep.width, prep.height, prep.bitRate)
+            createHardwareEncoder(
+                MuxerTarget.FilePath(outFile.absolutePath), prep.width, prep.height, prep.fps, prep.bitRate
+            )
         }.getOrElse { error ->
             Logger.w(TAG, "Hardware video encoder unavailable, falling back to JCodec", error)
             null
@@ -208,6 +220,8 @@ class RouteVideoExporter(private val context: Context) {
                     px = prep.px,
                     startTimeMillis = prep.startTimeMillis,
                     totalMillis = prep.totalMillis,
+                    fps = prep.fps,
+                    isActive = isActive,
                     onProgress = onProgress
                 )
                 return
@@ -219,7 +233,7 @@ class RouteVideoExporter(private val context: Context) {
         }
 
         encodeFramesWith(
-            encoder = JCodecFrameEncoder(outFile, FPS),
+            encoder = JCodecFrameEncoder(outFile, prep.fps),
             frame = prep.frame,
             canvas = prep.canvas,
             staticFrameBase = prep.staticFrameBase,
@@ -227,6 +241,8 @@ class RouteVideoExporter(private val context: Context) {
             px = prep.px,
             startTimeMillis = prep.startTimeMillis,
             totalMillis = prep.totalMillis,
+            fps = prep.fps,
+            isActive = isActive,
             onProgress = onProgress
         )
     }
@@ -240,13 +256,17 @@ class RouteVideoExporter(private val context: Context) {
         px: List<PointF>,
         startTimeMillis: Long,
         totalMillis: Long,
+        fps: Int,
+        isActive: () -> Boolean = { true },
         onProgress: (Float) -> Unit
     ) {
-        // 기록 시간(totalMillis)에 비례한 영상 길이로 프레임 수 결정.
-        val totalFrames = FPS * videoDurationSec(totalMillis)
+        // 영상 길이=실제 기록 시간, 프레임레이트=fps(길이에 따라 적응) → 총 프레임 수 결정.
+        val totalFrames = fps * videoDurationSec(totalMillis)
         var cursor = 0
         try {
             for (i in 0 until totalFrames) {
+                // 협조적 취소: 알림의 [취소]로 스코프가 취소되면 즉시 중단(인코더는 finally에서 정리).
+                if (!isActive()) throw CancellationException("export cancelled")
                 val p = if (totalFrames <= 1) 1f else i.toFloat() / (totalFrames - 1)
                 val targetMs = (p * totalMillis).toLong()
 
@@ -272,7 +292,7 @@ class RouteVideoExporter(private val context: Context) {
                 }
 
                 drawFrame(canvas, staticFrameBase, points, px, idx, head)
-                encoder.encodeFrame(frame, presentationTimeUs = i * 1_000_000L / FPS)
+                encoder.encodeFrame(frame, presentationTimeUs = i * 1_000_000L / fps)
 
                 if (i % 4 == 0) onProgress(0.10f + 0.88f * p)
             }
@@ -997,7 +1017,24 @@ class RouteVideoExporter(private val context: Context) {
         // 지도는 위쪽 MAP_HEIGHT 영역에, 날짜·거리·시간 캡션 바는 그 아래 CAPTION_BAR_HEIGHT 영역에 둔다.
         private const val CAPTION_BAR_HEIGHT = 150
         private const val MAP_HEIGHT = HEIGHT - CAPTION_BAR_HEIGHT
-        private const val FPS = 12
+
+        // 적응형 프레임레이트: 짧은 영상은 부드럽게(12fps), 길수록 낮춰(최저 6fps)
+        // 총 프레임 수와 렌더 시간을 줄인다. 지도 위 점이 느리게 움직여 시각 차이는 거의 없다.
+        private const val MAX_FPS = 12
+        private const val MIN_FPS = 6
+        private const val FPS_FULL_BELOW_SEC = 60    // 1분 이하 → MAX_FPS
+        private const val FPS_FLOOR_ABOVE_SEC = 600  // 10분 이상 → MIN_FPS
+
+        /** 영상 길이(초)에 따라 적응되는 프레임레이트(fps). 짧으면 부드럽게, 길수록 낮춘다. */
+        fun videoFps(durationSec: Int): Int = when {
+            durationSec <= FPS_FULL_BELOW_SEC -> MAX_FPS
+            durationSec >= FPS_FLOOR_ABOVE_SEC -> MIN_FPS
+            else -> {
+                val t = (durationSec - FPS_FULL_BELOW_SEC).toFloat() /
+                    (FPS_FLOOR_ABOVE_SEC - FPS_FULL_BELOW_SEC)
+                (MAX_FPS - t * (MAX_FPS - MIN_FPS)).roundToInt()
+            }
+        }
 
         // 내보내기 영상은 기록한 실제 시간 그대로의 길이(실시간 재생)로 만든다.
         // 50분을 기록하면 50분 영상이 된다. 너무 짧은 기록만 최소 길이로 보정한다.

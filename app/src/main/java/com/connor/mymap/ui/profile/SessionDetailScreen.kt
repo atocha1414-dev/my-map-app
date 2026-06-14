@@ -64,6 +64,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import android.app.Application
 import android.content.Intent
 import android.widget.Toast
+import com.connor.mymap.data.export.ExportState
 import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.ui.map.MapLibreView
 
@@ -215,7 +216,7 @@ fun SessionDetailScreen(
                         Spacer(Modifier.weight(1f))
                         IconButton(
                             onClick = { viewModel.exportVideo() },
-                            enabled = canPlay && exportState !is PlaybackViewModel.ExportState.Rendering
+                            enabled = canPlay && exportState !is ExportState.Rendering
                         ) {
                             Icon(Icons.Default.IosShare, contentDescription = "경로 영상 공유")
                         }
@@ -327,7 +328,7 @@ fun SessionDetailScreen(
     }
 
     // mp4 내보내기 — 진행 다이얼로그
-    (exportState as? PlaybackViewModel.ExportState.Rendering)?.let { st ->
+    (exportState as? ExportState.Rendering)?.let { st ->
         AlertDialog(
             onDismissRequest = { },
             confirmButton = { },
@@ -347,7 +348,7 @@ fun SessionDetailScreen(
 
     // mp4 내보내기 — 완료 시 사용자가 사진첩 보기/공유하기를 선택
     val exportContext = LocalContext.current
-    (exportState as? PlaybackViewModel.ExportState.Done)?.let { st ->
+    (exportState as? ExportState.Done)?.let { st ->
         AlertDialog(
             onDismissRequest = { viewModel.consumeExportResult() },
             title = { Text(if (st.savedToGallery) "영상 저장 완료" else "영상 생성 완료") },
@@ -390,7 +391,7 @@ fun SessionDetailScreen(
 
     LaunchedEffect(exportState) {
         when (val st = exportState) {
-            is PlaybackViewModel.ExportState.Error -> {
+            is ExportState.Error -> {
                 Toast.makeText(exportContext, st.message, Toast.LENGTH_SHORT).show()
                 viewModel.consumeExportResult()
             }

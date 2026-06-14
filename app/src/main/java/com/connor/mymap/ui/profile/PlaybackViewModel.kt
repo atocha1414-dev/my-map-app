@@ -1,22 +1,18 @@
 package com.connor.mymap.ui.profile
 
 import android.app.Application
-import android.content.ContentValues
-import android.content.Context
-import android.net.Uri
-import android.os.Build
-import android.provider.MediaStore
-import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.connor.mymap.data.export.ExportState
+import com.connor.mymap.data.export.RouteExportManager
+import com.connor.mymap.data.export.RouteExportService
 import com.connor.mymap.data.local.MapFileStorage
 import com.connor.mymap.data.local.TrackingHistoryStorage
 import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.util.Constants
-import com.connor.mymap.util.Formats
 import com.connor.mymap.util.Logger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -27,16 +23,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.maplibre.android.geometry.LatLngBounds
-import com.connor.mymap.data.export.RouteVideoExporter
-import com.connor.mymap.util.TrackingCalculator
-import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class PlaybackViewModel(
     application: Application,
@@ -233,185 +221,31 @@ class PlaybackViewModel(
         )
     }
 
-    // ─────────── mp4 내보내기 ───────────
-    sealed interface ExportState {
-        data object Idle : ExportState
-        data class Rendering(val progress: Float) : ExportState
-        data class Done(
-            val shareUri: Uri,
-            val galleryUri: Uri?,
-            val savedToGallery: Boolean
-        ) : ExportState
-        data class Error(val message: String) : ExportState
-    }
-
-    private val _exportState = MutableStateFlow<ExportState>(ExportState.Idle)
-    val exportState: StateFlow<ExportState> = _exportState.asStateFlow()
+    // ─────────── mp4 내보내기 (백그라운드 포그라운드 서비스) ───────────
+    // 상태는 RouteExportManager(프로세스 전역)가 보유 → 화면을 벗어나도 렌더링이 유지된다.
+    // 이 세션의 상태만 노출한다(다른 세션을 내보내는 중이면 이 화면에는 Idle로 보임).
+    val exportState: StateFlow<ExportState> = RouteExportManager.snapshot
+        .map { if (it.sessionId == sessionId) it.state else ExportState.Idle }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ExportState.Idle)
 
     val canExport: StateFlow<Boolean> = canPlay
 
     fun exportVideo() {
-        if (_exportState.value is ExportState.Rendering) return
-        val path = mapFilePath
-        val pts = _allPoints.value
-        val bounds = _routeBounds.value
-        if (path == null || pts.size < 2 || bounds == null) {
-            _exportState.value = ExportState.Error("내보낼 경로가 없습니다.")
+        val app = getApplication<Application>()
+        if (mapFilePath == null || _allPoints.value.size < 2) {
+            RouteExportManager.finish(sessionId, ExportState.Error("내보낼 경로가 없습니다."))
             return
         }
+        // 이미 다른 영상을 내보내는 중이면 무시(서비스가 한 번에 하나만 처리).
+        if (!RouteExportManager.beginIfIdle(sessionId)) return
         pause()
-        val app = getApplication<Application>()
-        val stats = TrackingCalculator.calculateStats(pts)
-        val title = Formats.dateTime(pts.first().timestampMillis)
-        val subtitle = "${formatKm(stats.distanceMeters)} · ${formatExportDuration(stats.durationMillis)}"
-
-        viewModelScope.launch {
-            _exportState.value = ExportState.Rendering(0f)
-            try {
-                // 이전 내보내기 캐시 정리(성공 시 삭제되지만 실패/구버전 잔여물 대비 안전망)
-                withContext(Dispatchers.IO) { pruneExportCache(app) }
-
-                val dateTaken = pts.first().timestampMillis
-                // 영상 길이는 기록 시간에 비례(내보내기 인코더와 동일 계산) → 갤러리 DURATION 메타데이터 일치.
-                val durationMs = RouteVideoExporter.videoDurationSec(stats.durationMillis) * 1000L
-                val onPr: (Float) -> Unit = { pr -> _exportState.value = ExportState.Rendering(pr) }
-
-                // ① API 29+ & 하드웨어 인코더가 있으면 MediaStore FileDescriptor에 직접 mux
-                //    → 캐시 파일·복사 단계 자체가 사라진다.
-                val directUri: Uri? = if (
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                    RouteVideoExporter.hasHardwareEncoder()
-                ) {
-                    exportDirectToGallery(app, path, pts, bounds, title, subtitle, dateTaken, durationMs, onPr)
-                } else null
-
-                val done = if (directUri != null) {
-                    ExportState.Done(shareUri = directUri, galleryUri = directUri, savedToGallery = true)
-                } else {
-                    // 폴백: 캐시 파일로 렌더한 뒤 갤러리에 복사(구버전/하드웨어 미지원/직접 경로 실패)
-                    val file = RouteVideoExporter(app).export(path, pts, bounds, title, subtitle, onPr)
-                    val galleryUri = withContext(Dispatchers.IO) {
-                        runCatching { saveToGallery(app, file, dateTaken, durationMs) }.getOrNull()
-                    }
-                    val shareUri = if (galleryUri != null) {
-                        withContext(Dispatchers.IO) { runCatching { file.delete() } }
-                        galleryUri
-                    } else {
-                        FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
-                    }
-                    ExportState.Done(shareUri, galleryUri, savedToGallery = galleryUri != null)
-                }
-                _exportState.value = done
-            } catch (e: Exception) {
-                Logger.e(TAG, "Video export failed", e)
-                _exportState.value = ExportState.Error(e.message ?: "내보내기에 실패했습니다.")
-            }
-        }
+        // 렌더링은 포그라운드 서비스에서 수행 → 화면을 벗어나도 계속되고 알림으로 진행을 표시.
+        RouteExportService.start(app, sessionId)
     }
 
     fun consumeExportResult() {
-        _exportState.value = ExportState.Idle
+        RouteExportManager.consume(sessionId)
     }
-
-    /**
-     * ① API 29+: MediaStore pending 항목을 만들고 그 FileDescriptor에 영상을 직접 mux.
-     * 캐시 파일·복사 단계 없이 갤러리에 바로 기록한다. 실패하면 항목을 지우고 null을 반환해
-     * 호출부가 파일 렌더 + 복사로 폴백하게 한다.
-     */
-    private suspend fun exportDirectToGallery(
-        context: Context,
-        mapFilePath: String,
-        points: List<TrackingPoint>,
-        bounds: org.maplibre.android.geometry.LatLngBounds,
-        title: String,
-        subtitle: String,
-        dateTakenMillis: Long,
-        durationMillis: Long,
-        onProgress: (Float) -> Unit
-    ): Uri? {
-        val resolver = context.contentResolver
-        val values = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, "mymap_route_${System.currentTimeMillis()}.mp4")
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/MyMap")
-            put(MediaStore.Video.Media.DATE_TAKEN, dateTakenMillis)
-            put(MediaStore.Video.Media.DURATION, durationMillis)
-            put(MediaStore.Video.Media.WIDTH, RouteVideoExporter.WIDTH)
-            put(MediaStore.Video.Media.HEIGHT, RouteVideoExporter.HEIGHT)
-            put(MediaStore.Video.Media.IS_PENDING, 1)
-        }
-        val uri = withContext(Dispatchers.IO) {
-            resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-        } ?: return null
-        return try {
-            withContext(Dispatchers.IO) {
-                resolver.openFileDescriptor(uri, "rw")?.use { pfd ->
-                    RouteVideoExporter(context).exportToFileDescriptor(
-                        pfd.fileDescriptor, mapFilePath, points, bounds, title, subtitle, onProgress
-                    )
-                } ?: error("MediaStore FileDescriptor unavailable")
-            }
-            withContext(Dispatchers.IO) {
-                values.clear()
-                values.put(MediaStore.Video.Media.IS_PENDING, 0)
-                resolver.update(uri, values, null, null)
-            }
-            uri
-        } catch (e: Exception) {
-            Logger.w(TAG, "Direct-to-gallery export failed; falling back to file copy")
-            withContext(Dispatchers.IO) { runCatching { resolver.delete(uri, null, null) } }
-            null
-        }
-    }
-
-    private fun saveToGallery(
-        context: Context,
-        file: File,
-        dateTakenMillis: Long,
-        durationMillis: Long
-    ): Uri? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
-        val resolver = context.contentResolver
-        val values = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, file.name)
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/MyMap")
-            // 갤러리 타임라인 정렬·미리보기를 위한 메타데이터
-            put(MediaStore.Video.Media.DATE_TAKEN, dateTakenMillis)
-            put(MediaStore.Video.Media.DURATION, durationMillis)
-            put(MediaStore.Video.Media.WIDTH, RouteVideoExporter.WIDTH)
-            put(MediaStore.Video.Media.HEIGHT, RouteVideoExporter.HEIGHT)
-            put(MediaStore.Video.Media.IS_PENDING, 1)
-        }
-        val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return null
-        return try {
-            resolver.openOutputStream(uri)?.use { out ->
-                file.inputStream().use { it.copyTo(out, bufferSize = 1 shl 20) } // 1MB 버퍼
-            } ?: error("Gallery output stream is unavailable")
-            values.clear()
-            values.put(MediaStore.Video.Media.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-            uri
-        } catch (e: Exception) {
-            runCatching { resolver.delete(uri, null, null) }
-            throw e
-        }
-    }
-
-    /** 내보내기 캐시(cacheDir/exports)에 남아 있는 이전 mp4들을 정리한다. */
-    private fun pruneExportCache(context: Context) {
-        runCatching {
-            val dir = File(context.cacheDir, "exports")
-            if (!dir.isDirectory) return
-            dir.listFiles()?.forEach { f ->
-                if (f.isFile && f.name.endsWith(".mp4")) f.delete()
-            }
-        }.onFailure { Logger.w(TAG, "Failed to prune export cache") }
-    }
-
-    private fun formatKm(meters: Float): String = Formats.distance(meters)
-
-    private fun formatExportDuration(millis: Long): String = Formats.duration(millis)
 
     override fun onCleared() {
         super.onCleared()
