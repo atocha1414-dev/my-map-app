@@ -9,11 +9,16 @@ object Constants {
         val DOWNLOAD_BASE_URL: String
             get() = BuildConfig.MAP_DOWNLOAD_BASE_URL
 
-        const val DEFAULT_MAP_FILENAME = "korea.mbtiles"
+        // 선택한 지역 지도를 저장하는 단일 활성 슬롯 파일명(지역이 무엇이든 이 파일에 받는다).
+        const val DEFAULT_MAP_FILENAME = "map.mbtiles"
 
-        // 전체 다운로드 URL
+        // 전체 다운로드 URL(레거시 폴백)
         val DEFAULT_MAP_URL: String
             get() = "$DOWNLOAD_BASE_URL/$DEFAULT_MAP_FILENAME"
+
+        // 지도 카탈로그(국가→지역). 작은 JSON이라 GitHub Pages에 호스팅(큰 mbtiles는 R2).
+        // 나중에 R2로 옮기려면 이 URL만 바꾸면 된다.
+        const val MANIFEST_URL = "https://atocha1414-dev.github.io/my-map-app/manifest.json"
     }
 
     // ═══ 네트워크 설정 ═══
