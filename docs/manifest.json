@@ -1,0 +1,329 @@
+{
+  "schema": 1,
+  "countries": [
+    {
+      "id": "kr",
+      "name": "한국",
+      "regions": [
+        {
+          "id": "kr",
+          "name": "대한민국",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/korea.mbtiles",
+          "sizeMB": 161
+        }
+      ]
+    },
+    {
+      "id": "us",
+      "name": "미국",
+      "regions": [
+        {
+          "id": "us-alabama",
+          "name": "Alabama",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-alabama.mbtiles",
+          "sizeMB": 86
+        },
+        {
+          "id": "us-alaska",
+          "name": "Alaska",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-alaska.mbtiles",
+          "sizeMB": 442
+        },
+        {
+          "id": "us-arizona",
+          "name": "Arizona",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-arizona.mbtiles",
+          "sizeMB": 127
+        },
+        {
+          "id": "us-arkansas",
+          "name": "Arkansas",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-arkansas.mbtiles",
+          "sizeMB": 61
+        },
+        {
+          "id": "us-california",
+          "name": "California",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-california.mbtiles",
+          "sizeMB": 146
+        },
+        {
+          "id": "us-colorado",
+          "name": "Colorado",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-colorado.mbtiles",
+          "sizeMB": 135
+        },
+        {
+          "id": "us-connecticut",
+          "name": "Connecticut",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-connecticut.mbtiles",
+          "sizeMB": 64
+        },
+        {
+          "id": "us-delaware",
+          "name": "Delaware",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-delaware.mbtiles",
+          "sizeMB": 10
+        },
+        {
+          "id": "us-district-of-columbia",
+          "name": "District of Columbia",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-district-of-columbia.mbtiles",
+          "sizeMB": 4
+        },
+        {
+          "id": "us-florida",
+          "name": "Florida",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-florida.mbtiles",
+          "sizeMB": 112
+        },
+        {
+          "id": "us-georgia",
+          "name": "Georgia",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-georgia.mbtiles",
+          "sizeMB": 167
+        },
+        {
+          "id": "us-hawaii",
+          "name": "Hawaii",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-hawaii.mbtiles",
+          "sizeMB": 48
+        },
+        {
+          "id": "us-idaho",
+          "name": "Idaho",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-idaho.mbtiles",
+          "sizeMB": 80
+        },
+        {
+          "id": "us-illinois",
+          "name": "Illinois",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-illinois.mbtiles",
+          "sizeMB": 146
+        },
+        {
+          "id": "us-indiana",
+          "name": "Indiana",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-indiana.mbtiles",
+          "sizeMB": 96
+        },
+        {
+          "id": "us-iowa",
+          "name": "Iowa",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-iowa.mbtiles",
+          "sizeMB": 77
+        },
+        {
+          "id": "us-kansas",
+          "name": "Kansas",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-kansas.mbtiles",
+          "sizeMB": 68
+        },
+        {
+          "id": "us-kentucky",
+          "name": "Kentucky",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-kentucky.mbtiles",
+          "sizeMB": 79
+        },
+        {
+          "id": "us-louisiana",
+          "name": "Louisiana",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-louisiana.mbtiles",
+          "sizeMB": 81
+        },
+        {
+          "id": "us-maine",
+          "name": "Maine",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-maine.mbtiles",
+          "sizeMB": 61
+        },
+        {
+          "id": "us-maryland",
+          "name": "Maryland",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-maryland.mbtiles",
+          "sizeMB": 82
+        },
+        {
+          "id": "us-massachusetts",
+          "name": "Massachusetts",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-massachusetts.mbtiles",
+          "sizeMB": 102
+        },
+        {
+          "id": "us-michigan",
+          "name": "Michigan",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-michigan.mbtiles",
+          "sizeMB": 171
+        },
+        {
+          "id": "us-minnesota",
+          "name": "Minnesota",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-minnesota.mbtiles",
+          "sizeMB": 165
+        },
+        {
+          "id": "us-mississippi",
+          "name": "Mississippi",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-mississippi.mbtiles",
+          "sizeMB": 55
+        },
+        {
+          "id": "us-missouri",
+          "name": "Missouri",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-missouri.mbtiles",
+          "sizeMB": 108
+        },
+        {
+          "id": "us-montana",
+          "name": "Montana",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-montana.mbtiles",
+          "sizeMB": 94
+        },
+        {
+          "id": "us-nebraska",
+          "name": "Nebraska",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-nebraska.mbtiles",
+          "sizeMB": 55
+        },
+        {
+          "id": "us-nevada",
+          "name": "Nevada",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-nevada.mbtiles",
+          "sizeMB": 64
+        },
+        {
+          "id": "us-new-hampshire",
+          "name": "New Hampshire",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-new-hampshire.mbtiles",
+          "sizeMB": 37
+        },
+        {
+          "id": "us-new-jersey",
+          "name": "New Jersey",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-new-jersey.mbtiles",
+          "sizeMB": 65
+        },
+        {
+          "id": "us-new-mexico",
+          "name": "New Mexico",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-new-mexico.mbtiles",
+          "sizeMB": 81
+        },
+        {
+          "id": "us-new-york",
+          "name": "New York",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-new-york.mbtiles",
+          "sizeMB": 190
+        },
+        {
+          "id": "us-north-carolina",
+          "name": "North Carolina",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-north-carolina.mbtiles",
+          "sizeMB": 183
+        },
+        {
+          "id": "us-north-dakota",
+          "name": "North Dakota",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-north-dakota.mbtiles",
+          "sizeMB": 71
+        },
+        {
+          "id": "us-ohio",
+          "name": "Ohio",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-ohio.mbtiles",
+          "sizeMB": 147
+        },
+        {
+          "id": "us-oklahoma",
+          "name": "Oklahoma",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-oklahoma.mbtiles",
+          "sizeMB": 91
+        },
+        {
+          "id": "us-oregon",
+          "name": "Oregon",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-oregon.mbtiles",
+          "sizeMB": 126
+        },
+        {
+          "id": "us-pennsylvania",
+          "name": "Pennsylvania",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-pennsylvania.mbtiles",
+          "sizeMB": 160
+        },
+        {
+          "id": "us-rhode-island",
+          "name": "Rhode Island",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-rhode-island.mbtiles",
+          "sizeMB": 16
+        },
+        {
+          "id": "us-south-carolina",
+          "name": "South Carolina",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-south-carolina.mbtiles",
+          "sizeMB": 81
+        },
+        {
+          "id": "us-south-dakota",
+          "name": "South Dakota",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-south-dakota.mbtiles",
+          "sizeMB": 41
+        },
+        {
+          "id": "us-tennessee",
+          "name": "Tennessee",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-tennessee.mbtiles",
+          "sizeMB": 95
+        },
+        {
+          "id": "us-texas",
+          "name": "Texas",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-texas.mbtiles",
+          "sizeMB": 141
+        },
+        {
+          "id": "us-utah",
+          "name": "Utah",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-utah.mbtiles",
+          "sizeMB": 77
+        },
+        {
+          "id": "us-vermont",
+          "name": "Vermont",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-vermont.mbtiles",
+          "sizeMB": 23
+        },
+        {
+          "id": "us-virginia",
+          "name": "Virginia",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-virginia.mbtiles",
+          "sizeMB": 173
+        },
+        {
+          "id": "us-washington",
+          "name": "Washington",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-washington.mbtiles",
+          "sizeMB": 163
+        },
+        {
+          "id": "us-west-virginia",
+          "name": "West Virginia",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-west-virginia.mbtiles",
+          "sizeMB": 47
+        },
+        {
+          "id": "us-wisconsin",
+          "name": "Wisconsin",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-wisconsin.mbtiles",
+          "sizeMB": 148
+        },
+        {
+          "id": "us-wyoming",
+          "name": "Wyoming",
+          "url": "https://pub-cf65b93161b54fe6aec05e54dbe1bfe7.r2.dev/us/us-wyoming.mbtiles",
+          "sizeMB": 56
+        }
+      ]
+    }
+  ]
+}
