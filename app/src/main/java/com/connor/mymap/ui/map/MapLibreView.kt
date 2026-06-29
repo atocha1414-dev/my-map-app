@@ -276,6 +276,25 @@ private fun emptyTrackFeatureCollection(): FeatureCollection {
 }
 
 /**
+ * mbtiles의 center 메타데이터("lng,lat,zoom")로 초기 카메라를 만든다.
+ * 다운로드한 지역(한국·미국 주 등)마다 다른 위치를 비추도록 한다. 실패 시 null → 기본값 폴백.
+ */
+private fun mbtilesInitialCamera(mapFilePath: String): CameraPosition? = runCatching {
+    val center = android.database.sqlite.SQLiteDatabase.openDatabase(
+        mapFilePath, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+    ).use { db ->
+        db.rawQuery("SELECT value FROM metadata WHERE name='center'", null).use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    } ?: return@runCatching null
+    val parts = center.split(",")
+    val lng = parts[0].trim().toDouble()
+    val lat = parts[1].trim().toDouble()
+    val zoom = parts.getOrNull(2)?.trim()?.toDoubleOrNull() ?: Constants.MapDefaults.INITIAL_ZOOM
+    CameraPosition.Builder().target(LatLng(lat, lng)).zoom(zoom).build()
+}.getOrNull()
+
+/**
  * MapView 인스턴스 생성
  */
 private fun createMapView(
@@ -293,15 +312,18 @@ private fun createMapView(
             map.setStyle(Style.Builder().fromJson(styleJson)) { style ->
                 Logger.d(TAG, "Style loaded successfully")
                 onMapReady(map, style)
-                map.cameraPosition = CameraPosition.Builder()
-                    .target(
-                        LatLng(
-                            Constants.MapDefaults.INITIAL_LATITUDE,
-                            Constants.MapDefaults.INITIAL_LONGITUDE
+                // 초기 카메라: 다운로드된 mbtiles의 center 메타데이터(지역별로 다름)로 이동.
+                // 지역 지도(예: 미국 주)를 받아도 엉뚱한 위치(서울)를 비춰 빈 화면이 되는 문제 방지.
+                map.cameraPosition = mbtilesInitialCamera(mapFilePath)
+                    ?: CameraPosition.Builder()
+                        .target(
+                            LatLng(
+                                Constants.MapDefaults.INITIAL_LATITUDE,
+                                Constants.MapDefaults.INITIAL_LONGITUDE
+                            )
                         )
-                    )
-                    .zoom(Constants.MapDefaults.INITIAL_ZOOM)
-                    .build()
+                        .zoom(Constants.MapDefaults.INITIAL_ZOOM)
+                        .build()
             }
 
             map.uiSettings.apply {
