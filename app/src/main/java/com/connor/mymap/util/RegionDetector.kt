@@ -2,9 +2,11 @@ package com.connor.mymap.util
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.location.Address
 import android.location.Geocoder
 import android.location.Location
+import android.location.LocationManager
 import android.os.Build
 import com.connor.mymap.domain.model.MapCatalog
 import com.connor.mymap.domain.model.MapRegion
@@ -28,6 +30,7 @@ import kotlin.coroutines.resume
  *    이는 Geofabrik 슬러그와 동일해 별도 매핑 테이블이 필요 없다.
  */
 object RegionDetector {
+    private const val LOCATION_FINE = android.Manifest.permission.ACCESS_FINE_LOCATION
 
     /** 위치 권한이 허용된 상태에서만 호출할 것. */
     @SuppressLint("MissingPermission")
@@ -46,14 +49,37 @@ object RegionDetector {
 
     @SuppressLint("MissingPermission")
     private suspend fun currentLocation(context: Context): Location? = withContext(Dispatchers.IO) {
+        val hasFineLocation = context.checkSelfPermission(LOCATION_FINE) == PackageManager.PERMISSION_GRANTED
         val client = LocationServices.getFusedLocationProviderClient(context)
         val cts = CancellationTokenSource()
-        suspendCancellableCoroutine { cont ->
-            client.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, cts.token)
+        val priority = if (hasFineLocation) {
+            Priority.PRIORITY_HIGH_ACCURACY
+        } else {
+            Priority.PRIORITY_BALANCED_POWER_ACCURACY
+        }
+        val fusedLocation = suspendCancellableCoroutine { cont ->
+            client.getCurrentLocation(priority, cts.token)
                 .addOnSuccessListener { cont.resume(it) }     // null일 수 있음
                 .addOnFailureListener { cont.resume(null) }
             cont.invokeOnCancellation { cts.cancel() }
         }
+        // 일부 에뮬레이터/기기는 Fused 현재 위치가 null이어도 platform provider에 마지막 위치가 남아 있다.
+        // 최초 지도 자동 다운로드가 괜히 수동 선택으로 떨어지지 않도록 한 번 더 확인한다.
+        fusedLocation ?: lastKnownPlatformLocation(context, hasFineLocation)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun lastKnownPlatformLocation(context: Context, hasFineLocation: Boolean): Location? {
+        val manager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return null
+        val providers = if (hasFineLocation) {
+            listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
+        } else {
+            listOf(LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
+        }
+        return providers
+            .mapNotNull { provider -> runCatching { manager.getLastKnownLocation(provider) }.getOrNull() }
+            .maxByOrNull { it.elapsedRealtimeNanos }
     }
 
     private suspend fun reverseGeocode(context: Context, lat: Double, lng: Double): Address? =

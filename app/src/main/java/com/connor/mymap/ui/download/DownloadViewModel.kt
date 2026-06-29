@@ -92,6 +92,24 @@ class DownloadViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /** 최초 진입 자동 흐름: 위치 감지에 성공하면 사용자 선택 없이 바로 해당 지역 지도를 받는다. */
+    fun detectRegionAndStartDownload() {
+        val cat = (_catalog.value as? CatalogState.Loaded)?.catalog ?: return
+        viewModelScope.launch {
+            _detecting.value = true
+            _detectFailed.value = false
+            val region = RegionDetector.detect(getApplication(), cat)
+            _detecting.value = false
+
+            if (region != null) {
+                _selectedRegion.value = region
+                downloadRegion(region)
+            } else {
+                _detectFailed.value = true
+            }
+        }
+    }
+
     /** 위치 권한 거부 시 호출 → 직접 선택 안내. */
     fun onLocationDenied() {
         _detectFailed.value = true
@@ -105,6 +123,10 @@ class DownloadViewModel(application: Application) : AndroidViewModel(application
     /** 선택된 지역을 단일 활성 슬롯(map.mbtiles)으로 다운로드. */
     fun startDownload() {
         val region = _selectedRegion.value ?: return
+        downloadRegion(region)
+    }
+
+    private fun downloadRegion(region: MapRegion) {
         viewModelScope.launch(Dispatchers.IO) {
             _state.value = DownloadState.InProgress(0, 0)
             val result = downloader.download(

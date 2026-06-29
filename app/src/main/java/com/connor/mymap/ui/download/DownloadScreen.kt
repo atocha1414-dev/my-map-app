@@ -31,6 +31,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -122,11 +123,20 @@ private fun RegionSelectionView(viewModel: DownloadViewModel) {
     val selected by viewModel.selectedRegion.collectAsStateWithLifecycle()
     val detecting by viewModel.detecting.collectAsStateWithLifecycle()
     val detectFailed by viewModel.detectFailed.collectAsStateWithLifecycle()
+    var autoPermissionRequested by rememberSaveable { mutableStateOf(false) }
+    var showManualSelection by rememberSaveable { mutableStateOf(false) }
 
     val permLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) viewModel.detectRegion() else viewModel.onLocationDenied()
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val granted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted) {
+            viewModel.detectRegionAndStartDownload()
+        } else {
+            viewModel.onLocationDenied()
+            showManualSelection = true
+        }
     }
 
     when (val cat = catalog) {
@@ -150,14 +160,64 @@ private fun RegionSelectionView(viewModel: DownloadViewModel) {
                 Text("다시 시도", modifier = Modifier.padding(vertical = 6.dp))
             }
         }
-        is DownloadViewModel.CatalogState.Loaded -> RegionPicker(
-            countries = cat.catalog.countries,
-            selected = selected,
-            detecting = detecting,
-            detectFailed = detectFailed,
-            onDetect = { permLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION) },
-            onSelect = viewModel::selectRegion,
-            onDownload = viewModel::startDownload
+        is DownloadViewModel.CatalogState.Loaded -> {
+            // 약관 동의 직후에는 사용자 선택을 줄이기 위해 위치 권한을 먼저 요청하고,
+            // 감지 성공 시 해당 지역 MBTiles를 자동 다운로드한다. 거부/실패 시에만 수동 선택으로 폴백한다.
+            LaunchedEffect(Unit) {
+                if (!autoPermissionRequested) {
+                    autoPermissionRequested = true
+                    permLauncher.launch(LOCATION_PERMISSIONS)
+                }
+            }
+
+            LaunchedEffect(detectFailed) {
+                if (detectFailed) showManualSelection = true
+            }
+
+            if (showManualSelection) {
+                RegionPicker(
+                    countries = cat.catalog.countries,
+                    selected = selected,
+                    detecting = detecting,
+                    detectFailed = detectFailed,
+                    onDetect = { permLauncher.launch(LOCATION_PERMISSIONS) },
+                    onSelect = viewModel::selectRegion,
+                    onDownload = viewModel::startDownload
+                )
+            } else {
+                AutoDetectingRegionView(detecting = detecting)
+            }
+        }
+    }
+}
+
+private val LOCATION_PERMISSIONS = arrayOf(
+    Manifest.permission.ACCESS_FINE_LOCATION,
+    Manifest.permission.ACCESS_COARSE_LOCATION
+)
+
+@Composable
+private fun AutoDetectingRegionView(detecting: Boolean) {
+    MapBackground {
+        Text("🗺️", style = MaterialTheme.typography.displayMedium)
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "현재 위치 확인 중",
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.headlineSmall
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "위치에 맞는 지도를 자동으로 준비합니다",
+            color = Color.White.copy(alpha = 0.85f),
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(28.dp))
+        CircularProgressIndicator(
+            color = Color.White,
+            strokeWidth = if (detecting) 4.dp else 3.dp
         )
     }
 }
