@@ -130,6 +130,12 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
             runCatching { enforceHistoryRetentionPolicy() }
                 .onFailure { e -> Logger.e(TAG, "Failed to enforce retention policy on startup", e) }
         }
+        // 최초/매 실행 시 현재 위치로 카메라를 맞춘다(위치 권한이 있을 때).
+        // _myLocation이 채워지면 MapLibreView가 그 위치(도시 줌)로 카메라를 이동한다.
+        // 위치를 못 받으면 받은 지역의 center(mbtiles center)로 폴백된다 — 누구에게나 동작.
+        if (PermissionHelper.hasLocationPermission(getApplication())) {
+            fetchLocation()
+        }
         Logger.d(TAG, "MapViewModel initialized, mapFilePath: $mapFilePath")
     }
 
