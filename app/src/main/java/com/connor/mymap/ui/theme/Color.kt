@@ -16,6 +16,10 @@ val BrandGradient = Brush.linearGradient(listOf(BrandNavy, BrandDeep, BrandTeal)
 /** 진행 중 경로/현재 위치에 쓰는 트랙 블루 (지도 위 대비용). */
 val TrackBlue = Color(0xFF1F6FEB)
 
+/** 기록 중 상태를 나타내는 코랄 (스토어 그래픽과 동일 톤). 라이트/다크 공통. */
+val RecordingCoral = Color(0xFFF26B4E)
+val OnRecordingCoral = Color(0xFFFFFFFF)
+
 // ── Light color roles ──────────────────────────
 val LightPrimary = Color(0xFF0F8A7E)
 val LightOnPrimary = Color(0xFFFFFFFF)

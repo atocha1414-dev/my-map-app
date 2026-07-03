@@ -315,6 +315,8 @@ private fun SessionListContent(
     var isEditMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(emptySet<String>()) }
     var showBulkDeleteConfirm by remember { mutableStateOf(false) }
+    // 달력 접힘 상태(기본 접힘 → 한 줄 요약 바). 기간 선택 중에는 강제로 펼침 유지.
+    var calendarExpanded by rememberSaveable { mutableStateOf(false) }
     var viewMode by rememberSaveable { mutableStateOf(ViewMode.List) }
     val bgColor = MaterialTheme.colorScheme.background
 
@@ -432,7 +434,7 @@ private fun SessionListContent(
             sessions.isEmpty() -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        text = "아직 저장된 이동 기록이 없습니다.\n홈에서 ▶ 시작 후 ↻ 초기화를 누르면\n여기에 기록이 저장됩니다.",
+                        text = "아직 저장된 이동 기록이 없습니다.\n홈에서 기록을 시작하고 '종료하고 저장'을 누르면\n여기에 표시됩니다.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -455,23 +457,56 @@ private fun SessionListContent(
                     bottom = if (isEditMode) 80.dp else 16.dp
                 )
                 val calendarPanel: @Composable () -> Unit = {
-                    CalendarPanel(
-                        year = dispYear,
-                        month1 = dispMonth1,
-                        today = today,
-                        daysWithRecords = daysWithRecords,
-                        selectionMode = selectionMode,
-                        selectedDay = selectedDay,
-                        rangeStart = rangeStart,
-                        rangeEnd = rangeEnd,
-                        monthCount = monthSessions.size,
-                        monthDistanceText = monthDistanceText,
-                        onDayClick = { handleDayClick(it) },
-                        onPrevMonth = { goPrevMonth() },
-                        onNextMonth = { goNextMonth() },
-                        onModeChange = { handleModeChange(it) },
-                        onClearRange = { rangeStartInt = -1; rangeEndInt = -1 }
-                    )
+                    // 기본은 접힘(한 줄 요약 바). 기간 선택 모드에서는 흐름이 끊기지 않게 강제로 펼침.
+                    val calendarOpen = calendarExpanded || selectionMode == CalendarSelectionMode.Range
+                    Column(Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.surface)
+                                .clickable { calendarExpanded = !calendarExpanded }
+                                .padding(horizontal = 18.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                "${dispYear}년 ${dispMonth1}월",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "기록 ${monthSessions.size}개 · $monthDistanceText",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Icon(
+                                Icons.Default.ExpandMore,
+                                contentDescription = if (calendarOpen) "달력 접기" else "달력 펼치기",
+                                modifier = Modifier.rotate(if (calendarOpen) 180f else 0f)
+                            )
+                        }
+                        AnimatedVisibility(visible = calendarOpen) {
+                            CalendarPanel(
+                                year = dispYear,
+                                month1 = dispMonth1,
+                                today = today,
+                                daysWithRecords = daysWithRecords,
+                                selectionMode = selectionMode,
+                                selectedDay = selectedDay,
+                                rangeStart = rangeStart,
+                                rangeEnd = rangeEnd,
+                                monthCount = monthSessions.size,
+                                monthDistanceText = monthDistanceText,
+                                onDayClick = { handleDayClick(it) },
+                                onPrevMonth = { goPrevMonth() },
+                                onNextMonth = { goNextMonth() },
+                                onModeChange = { handleModeChange(it) },
+                                onClearRange = { rangeStartInt = -1; rangeEndInt = -1 }
+                            )
+                        }
+                    }
                 }
                 if (viewMode == ViewMode.List) {
                     LazyColumn(
@@ -491,7 +526,6 @@ private fun SessionListContent(
                                     SessionCard(
                                         session = session,
                                         onCardClick = { onCardClick(session.id) },
-                                        onDeleteClick = { pendingDeleteId = session.id },
                                         loadThumbnailFileIfExists = { loadThumbnailFileIfExists(session.id) },
                                         ensureThumbnailFile = { points ->
                                             ensureThumbnailFile(session.id, points)
@@ -584,7 +618,7 @@ private fun SessionListContent(
                 }
                 if (isEditMode) {
                     Text(
-                        text = if (selectedIds.isEmpty()) "항목 선택" else "${selectedIds.size}개 선택됨",
+                        text = if (selectedIds.isEmpty()) "항목을 선택하세요" else "${selectedIds.size}개 선택됨",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.weight(1f)
@@ -637,15 +671,8 @@ private fun SessionListContent(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = if (selectedIds.isEmpty()) "항목 선택"
-                               else "${selectedIds.size}개",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (selectedIds.isEmpty())
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f)
-                    )
+                    // 좌측 카운트 텍스트 제거(상단 "n개 선택됨"과 중복). 버튼 라벨에 수량 포함.
+                    Spacer(Modifier.weight(1f))
                     if (SHOW_FOOTPRINTS_UI) {
                         TextButton(
                             onClick = {
@@ -666,7 +693,7 @@ private fun SessionListContent(
                             contentColor = MaterialTheme.colorScheme.onError
                         )
                     ) {
-                        Text("삭제")
+                        Text(if (selectedIds.isEmpty()) "삭제" else "${selectedIds.size}개 삭제")
                     }
                 }
             }
@@ -852,7 +879,6 @@ private fun DateSectionHeader(
 private fun SessionCard(
     session: TrackingSession,
     onCardClick: () -> Unit,
-    onDeleteClick: () -> Unit,
     loadThumbnailFileIfExists: suspend () -> File?,
     ensureThumbnailFile: suspend (List<TrackingPoint>) -> File?,
     loadPoints: suspend () -> List<TrackingPoint>,
@@ -888,18 +914,12 @@ private fun SessionCard(
                         text = formatDate(session.startedAtMillis),
                         style = MaterialTheme.typography.titleMedium
                     )
+                    // 카드별 삭제 아이콘 제거 → 삭제는 편집 모드로 일원화(체크박스 선택 후 하단 삭제).
                     if (isEditMode) {
                         Checkbox(
                             checked = isSelected,
                             onCheckedChange = { onToggleSelect() }
                         )
-                    } else {
-                        IconButton(onClick = onDeleteClick) {
-                            Icon(
-                                imageVector = Icons.Default.Delete,
-                                contentDescription = "기록 삭제"
-                            )
-                        }
                     }
                 }
                 Spacer(Modifier.height(8.dp))

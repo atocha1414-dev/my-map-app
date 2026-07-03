@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -108,6 +108,6 @@ fun MainScreen() {
 }
 
 enum class MainTab(val label: String, val icon: ImageVector) {
-    Home(label = "홈", icon = Icons.Default.Map),
-    Profile(label = "목록", icon = Icons.AutoMirrored.Filled.List)
+    Home(label = "지도", icon = Icons.Default.Map),
+    Profile(label = "이동 기록", icon = Icons.Default.History)
 }

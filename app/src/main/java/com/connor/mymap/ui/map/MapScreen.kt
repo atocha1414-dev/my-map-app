@@ -16,28 +16,40 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -49,11 +61,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.connor.mymap.ui.common.ErrorView
+import com.connor.mymap.ui.theme.RecordingCoral
 import com.connor.mymap.util.PermissionHelper
 import com.connor.mymap.util.Formats
 import com.connor.mymap.util.Logger
@@ -104,8 +118,8 @@ fun MapScreen(
     }
 
     val snackbarHostState = remember { SnackbarHostState() }
-    var showResetConfirm by remember { mutableStateOf(false) }
-    var showClearConfirm by remember { mutableStateOf(false) }
+    var showSaveConfirm by remember { mutableStateOf(false) }
+    var showDiscardConfirm by remember { mutableStateOf(false) }
 
     // 정책 반영: GPS/위치 서비스 켜기 요청은 약관 동의 직후가 아니라
     // 사용자가 지도 화면에서 "내 위치" 버튼을 누른 뒤에만 실행한다.
@@ -240,6 +254,16 @@ fun MapScreen(
             modifier = Modifier.fillMaxSize()
         )
 
+        // 기록 상태 배지: 몰입 모드에서도 항상 표시 (배지 없음 = 기록 안 함)
+        RecordingStatusBadge(
+            isTracking = isTracking,
+            isPaused = isPaused,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .statusBarsPadding()
+                .padding(start = 16.dp, top = 12.dp)
+        )
+
         AnimatedVisibility(
             visible = !isImmersive && (isTracking || isPaused || trackPoints.isNotEmpty()),
             enter = fadeIn() + slideInVertically { -it },
@@ -280,83 +304,44 @@ fun MapScreen(
             modifier = Modifier.align(Alignment.BottomEnd)
         ) {
         Column(
-            modifier = Modifier
-                .padding(16.dp)
+            modifier = Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.End
         ) {
-            when {
-                isTracking -> {
-                    // 기록 중: 초기화(위) + 일시정지(아래)
-                    FloatingActionButton(
-                        onClick = { showResetConfirm = true }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "이동 경로 초기화"
-                        )
-                    }
-                    FloatingActionButton(
-                        onClick = { viewModel.onStopTrackingClick() },
-                        modifier = Modifier.padding(top = 12.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Pause,
-                            contentDescription = "이동 경로 기록 일시정지"
-                        )
-                    }
-                }
-                isPaused || trackPoints.isNotEmpty() -> {
-                    // 일시정지 상태: 초기화(위) + 재시작(아래)
-                    FloatingActionButton(
-                        onClick = { showResetConfirm = true }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "이동 경로 초기화"
-                        )
-                    }
-                    FloatingActionButton(
-                        onClick = {
-                            viewModel.onStartTrackingClick(
-                                hasForegroundPermission = PermissionHelper.hasLocationPermission(context),
-                                hasBackgroundPermission = PermissionHelper.hasBackgroundLocationPermission(context),
-                                hasNotificationPermission = PermissionHelper.hasNotificationPermission(context)
-                            )
-                        },
-                        modifier = Modifier.padding(top = 12.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "이동 경로 기록 재시작"
-                        )
-                    }
-                }
-                else -> {
-                    // 초기 상태: 시작만
-                    FloatingActionButton(
-                        onClick = {
-                            viewModel.onStartTrackingClick(
-                                hasForegroundPermission = PermissionHelper.hasLocationPermission(context),
-                                hasBackgroundPermission = PermissionHelper.hasBackgroundLocationPermission(context),
-                                hasNotificationPermission = PermissionHelper.hasNotificationPermission(context)
-                            )
-                        }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "이동 경로 기록 시작"
-                        )
-                    }
-                }
+            // 종료하고 저장: 기록 중/일시정지/경로 있을 때 노출 (실제 동작은 저장 후 초기화)
+            if (isTracking || isPaused || trackPoints.isNotEmpty()) {
+                ExtendedFloatingActionButton(
+                    onClick = { showSaveConfirm = true },
+                    icon = { Icon(Icons.Default.Check, contentDescription = null) },
+                    text = { Text("종료하고 저장") },
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
             }
 
-            // 내 위치 버튼
-            // 이 버튼이 1회성 현재 위치 확인을 위한 위치 권한 요청과 GPS 설정 팝업 진입점이다.
-            FloatingActionButton(
+            // 주 동작(시작/일시정지/재시작): 72dp 원형, 기록 중=코랄
+            PrimaryTrackingButton(
+                isTracking = isTracking,
+                onClick = {
+                    if (isTracking) {
+                        viewModel.onStopTrackingClick()
+                    } else {
+                        viewModel.onStartTrackingClick(
+                            hasForegroundPermission = PermissionHelper.hasLocationPermission(context),
+                            hasBackgroundPermission = PermissionHelper.hasBackgroundLocationPermission(context),
+                            hasNotificationPermission = PermissionHelper.hasNotificationPermission(context)
+                        )
+                    }
+                }
+            )
+
+            // 보조: 내 위치 (48dp). 1회성 현재 위치 확인 + 위치 권한/GPS 설정 진입점.
+            SmallFloatingActionButton(
                 onClick = {
                     viewModel.onMyLocationClick(
                         hasPermission = PermissionHelper.hasLocationPermission(context)
                     )
                 },
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.secondary,
                 modifier = Modifier.padding(top = 12.dp)
             ) {
                 Icon(
@@ -373,47 +358,47 @@ fun MapScreen(
             exit = fadeOut() + slideOutVertically { it },
             modifier = Modifier.align(Alignment.BottomStart)
         ) {
-            FloatingActionButton(
-                onClick = { showClearConfirm = true },
+            TextButton(
+                onClick = { showDiscardConfirm = true },
                 modifier = Modifier.padding(16.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "이동 경로 삭제"
+                Text(
+                    text = "저장하지 않고 삭제",
+                    color = MaterialTheme.colorScheme.error
                 )
             }
         }
 
-        if (showResetConfirm) {
+        if (showSaveConfirm) {
             AlertDialog(
-                onDismissRequest = { showResetConfirm = false },
-                title = { Text("기록을 초기화할까요?") },
-                text = { Text("지금까지 기록한 이동 경로와 시간이 모두 삭제됩니다.") },
+                onDismissRequest = { showSaveConfirm = false },
+                title = { Text("기록을 종료하고 저장할까요?") },
+                text = { Text("지금까지의 이동 경로가 '이동 기록' 탭에 저장되고, 지도의 경로는 초기화됩니다.") },
                 confirmButton = {
                     TextButton(onClick = {
-                        showResetConfirm = false
-                        viewModel.onResetTrackingClick()
-                    }) { Text("초기화") }
+                        showSaveConfirm = false
+                        viewModel.onFinishAndSaveClick()
+                    }) { Text("저장") }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showResetConfirm = false }) { Text("취소") }
+                    TextButton(onClick = { showSaveConfirm = false }) { Text("취소") }
                 }
             )
         }
 
-        if (showClearConfirm) {
+        if (showDiscardConfirm) {
             AlertDialog(
-                onDismissRequest = { showClearConfirm = false },
-                title = { Text("경로를 지울까요?") },
-                text = { Text("화면에 표시된 이동 경로가 삭제됩니다.") },
+                onDismissRequest = { showDiscardConfirm = false },
+                title = { Text("저장하지 않고 삭제할까요?") },
+                text = { Text("이번 기록이 저장되지 않고 사라집니다. 되돌릴 수 없습니다.") },
                 confirmButton = {
                     TextButton(onClick = {
-                        showClearConfirm = false
+                        showDiscardConfirm = false
                         viewModel.onClearTrackClick()
-                    }) { Text("삭제") }
+                    }) { Text("삭제", color = MaterialTheme.colorScheme.error) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showClearConfirm = false }) { Text("취소") }
+                    TextButton(onClick = { showDiscardConfirm = false }) { Text("취소") }
                 }
             )
         }
@@ -472,11 +457,7 @@ private fun TrackingStatsPanel(
             Text(
                 text = if (isTracking) "기록 중" else "최근 기록",
                 style = MaterialTheme.typography.labelLarge,
-                color = if (isTracking) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                }
+                color = if (isTracking) RecordingCoral else MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Spacer(Modifier.height(8.dp))
@@ -510,6 +491,78 @@ private fun formatDistance(distanceMeters: Float): String = Formats.distance(dis
 private fun formatDuration(durationMillis: Long): String = Formats.duration(durationMillis)
 
 private fun formatSpeed(speedMetersPerSecond: Float): String = Formats.speed(speedMetersPerSecond)
+
+/** 주 동작 FAB: 72dp 원형. 기록 중=코랄(일시정지 아이콘), 그 외=primary(시작/재시작). */
+@Composable
+private fun PrimaryTrackingButton(
+    isTracking: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    FloatingActionButton(
+        onClick = onClick,
+        shape = CircleShape,
+        containerColor = if (isTracking) RecordingCoral else MaterialTheme.colorScheme.primary,
+        contentColor = Color.White,
+        modifier = modifier.size(72.dp)
+    ) {
+        Icon(
+            imageVector = if (isTracking) Icons.Default.Pause else Icons.Default.PlayArrow,
+            contentDescription = if (isTracking) "일시정지" else "기록 시작",
+            modifier = Modifier.size(32.dp)
+        )
+    }
+}
+
+/** 좌상단 고정 상태 배지: 기록 중(코랄 점 펄스) / 일시정지(회색 점) / 없으면 미표시. */
+@Composable
+private fun RecordingStatusBadge(
+    isTracking: Boolean,
+    isPaused: Boolean,
+    modifier: Modifier = Modifier
+) {
+    if (!isTracking && !isPaused) return
+
+    val pulse = rememberInfiniteTransition(label = "pulse")
+    val dotAlpha by pulse.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.35f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dotAlpha"
+    )
+
+    Surface(
+        modifier = modifier,
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 4.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .background(
+                        color = if (isTracking) RecordingCoral.copy(alpha = dotAlpha)
+                        else MaterialTheme.colorScheme.outline,
+                        shape = CircleShape
+                    )
+            )
+            Text(
+                text = if (isTracking) "실시간 기록 중" else "일시정지됨",
+                style = MaterialTheme.typography.labelLarge,
+                color = if (isTracking) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
 
 @Composable
 private fun BackgroundLocationPermissionDialog(

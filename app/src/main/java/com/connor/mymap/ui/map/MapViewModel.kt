@@ -269,7 +269,8 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
         TrackingService.stop(getApplication())
     }
 
-    fun onResetTrackingClick() {
+    /** "종료하고 저장": 실제 동작은 현재 세션을 저장한 뒤 지도의 경로를 초기화한다(동작 변경 없음, 이름만 정정). */
+    fun onFinishAndSaveClick() {
         pendingTrackingStart = false
 
         val startedAt = TrackingState.trackingStartedAtMillis.value
