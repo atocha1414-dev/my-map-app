@@ -53,6 +53,8 @@ import org.maplibre.android.style.sources.GeoJsonSource
 private const val TAG = "MapLibreView"
 private const val TRACK_SOURCE_ID = "my-track-source"
 private const val TRACK_LAYER_ID = "my-track-layer"
+// 코랄 본선 아래에 깔리는 흰 테두리(casing) — 밝은 지도·위성 지도 모두에서 대비 확보.
+private const val TRACK_CASING_LAYER_ID = "my-track-casing-layer"
 private const val MY_LOCATION_SOURCE_ID = "my-location-source"
 private const val MY_LOCATION_ACCURACY_LAYER_ID = "my-location-accuracy-layer"
 private const val MY_LOCATION_DOT_LAYER_ID = "my-location-dot-layer"
@@ -244,9 +246,19 @@ private fun updateTrackLine(
     val source = style.getSourceAs<GeoJsonSource>(TRACK_SOURCE_ID)
         ?: GeoJsonSource(TRACK_SOURCE_ID, emptyTrackFeatureCollection()).also { newSource ->
             style.addSource(newSource)
+            // 흰 casing(아래) — 코랄 본선의 테두리. 굵기는 본선 + 6dp.
+            style.addLayer(
+                LineLayer(TRACK_CASING_LAYER_ID, TRACK_SOURCE_ID).withProperties(
+                    lineColor("#FFFFFF"),
+                    lineWidth(11f),
+                    lineCap(Property.LINE_CAP_ROUND),
+                    lineJoin(Property.LINE_JOIN_ROUND)
+                )
+            )
+            // 코랄 본선(위) — 스토어 그래픽·목록 썸네일과 통일한 기록/재생 경로색.
             style.addLayer(
                 LineLayer(TRACK_LAYER_ID, TRACK_SOURCE_ID).withProperties(
-                    lineColor("#1976D2"),
+                    lineColor("#F26B4E"),
                     lineWidth(5f),
                     lineCap(Property.LINE_CAP_ROUND),
                     lineJoin(Property.LINE_JOIN_ROUND)

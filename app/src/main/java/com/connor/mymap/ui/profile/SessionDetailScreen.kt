@@ -48,7 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -67,6 +67,7 @@ import android.content.Intent
 import android.widget.Toast
 import com.connor.mymap.data.export.ExportState
 import com.connor.mymap.domain.model.TrackingPoint
+import com.connor.mymap.ui.theme.BrandGradient
 import com.connor.mymap.ui.map.MapLibreView
 
 @Composable
@@ -189,17 +190,13 @@ fun SessionDetailScreen(
                 exit = slideOutVertically { -it } + fadeOut(),
                 modifier = Modifier.align(Alignment.TopCenter)
             ) {
-                val headerBaseColor = MaterialTheme.colorScheme.surface
+                // 브랜드 히어로 밴드 — 스토어 그래픽의 남색→청록 그라데이션을 세션 상세 상단에 절제 적용.
+                // 불투명이므로 전환 중 뒤 "이동 기록" 화면이 비치는 문제도 함께 해소된다. 위 콘텐츠는 흰색만.
+                val shareEnabled = canPlay && exportState !is ExportState.Rendering
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                                0.0f to headerBaseColor.copy(alpha = 0.97f),
-                                0.75f to headerBaseColor.copy(alpha = 0.85f),
-                                1.0f to headerBaseColor.copy(alpha = 0f)
-                            )
-                        )
+                        .background(BrandGradient)
                         .statusBarsPadding()
                         .padding(end = 16.dp, bottom = 20.dp)
                 ) {
@@ -208,18 +205,27 @@ fun SessionDetailScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "뒤로",
+                                tint = Color.White
+                            )
                         }
                         Text(
                             text = "경로 재생",
-                            style = MaterialTheme.typography.titleLarge
+                            style = MaterialTheme.typography.titleLarge,
+                            color = Color.White
                         )
                         Spacer(Modifier.weight(1f))
                         IconButton(
                             onClick = { viewModel.exportVideo() },
-                            enabled = canPlay && exportState !is ExportState.Rendering
+                            enabled = shareEnabled
                         ) {
-                            Icon(Icons.Default.IosShare, contentDescription = "경로 영상 공유")
+                            Icon(
+                                Icons.Default.IosShare,
+                                contentDescription = "경로 영상 공유",
+                                tint = Color.White.copy(alpha = if (shareEnabled) 1f else 0.4f)
+                            )
                         }
                     }
                 }

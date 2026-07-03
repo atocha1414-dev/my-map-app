@@ -90,6 +90,7 @@ fun MainScreen() {
                 MapScreen(
                     isImmersive = isImmersive,
                     onMapTap = { isImmersive = !isImmersive },
+                    onNavigateToProfile = { selectedTab = MainTab.Profile },
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer { alpha = if (selectedTab == MainTab.Home) 1f else 0f }
@@ -101,6 +102,7 @@ fun MainScreen() {
                     modifier = Modifier.fillMaxSize(),
                     onSecondaryMapVisibleChange = { isProfileSecondaryMapVisible = it },
                     onSessionDetailImmersiveChange = { isProfileDetailImmersive = it },
+                    onNavigateToMap = { selectedTab = MainTab.Home },
                 )
             }
         }

@@ -33,7 +33,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MyLocation
@@ -47,8 +49,11 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -58,15 +63,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.connor.mymap.ui.common.ErrorView
+import com.connor.mymap.ui.theme.BrandGradient
+import com.connor.mymap.ui.theme.BrandTeal
 import com.connor.mymap.ui.theme.RecordingCoral
 import com.connor.mymap.util.PermissionHelper
 import com.connor.mymap.util.Formats
@@ -78,12 +88,14 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.LocationSettingsRequest
 import com.google.android.gms.location.Priority
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun MapScreen(
     modifier: Modifier = Modifier,
     isImmersive: Boolean = false,
     onMapTap: () -> Unit = {},
+    onNavigateToProfile: () -> Unit = {},
     viewModel: MapViewModel = viewModel()
 ) {
     val context = LocalContext.current
@@ -118,6 +130,7 @@ fun MapScreen(
     }
 
     val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     var showSaveConfirm by remember { mutableStateOf(false) }
     var showDiscardConfirm by remember { mutableStateOf(false) }
 
@@ -377,7 +390,17 @@ fun MapScreen(
                 confirmButton = {
                     TextButton(onClick = {
                         showSaveConfirm = false
+                        // 초기화 전에 거리 문구를 캡처(onFinishAndSaveClick 이후 trackPoints가 비워짐).
+                        val savedDistanceText = Formats.distance(trackingStats.distanceMeters)
                         viewModel.onFinishAndSaveClick()
+                        scope.launch {
+                            val result = snackbarHostState.showSnackbar(
+                                message = "$savedDistanceText 기록이 저장됐어요",
+                                actionLabel = "보기",
+                                duration = SnackbarDuration.Short
+                            )
+                            if (result == SnackbarResult.ActionPerformed) onNavigateToProfile()
+                        }
                     }) { Text("저장") }
                 },
                 dismissButton = {
@@ -428,13 +451,45 @@ fun MapScreen(
             )
         }
 
-        // Snackbar (권한 거부 안내)
+        // Snackbar — 저장 완료(축하: 브랜드 그라데이션)와 권한 안내(기본)를 구분해 렌더한다.
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(16.dp)
-        )
+        ) { data ->
+            if (data.visuals.actionLabel == "보기") {
+                // 저장 완료 축하 — 그라데이션은 이 축하 순간에만(절제 원칙).
+                Snackbar(
+                    containerColor = Color.Transparent,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(BrandGradient)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Check, contentDescription = null, tint = Color.White)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                data.visuals.message,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "이동 기록 탭에서 확인할 수 있습니다",
+                                color = Color.White.copy(alpha = 0.75f),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        TextButton(onClick = { data.performAction() }) {
+                            Text("보기", color = BrandTeal)
+                        }
+                    }
+                }
+            } else {
+                Snackbar(snackbarData = data)
+            }
+        }
     }
 }
 

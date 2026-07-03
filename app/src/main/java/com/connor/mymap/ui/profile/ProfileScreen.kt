@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -76,6 +77,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -83,6 +85,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.connor.mymap.R
 import com.connor.mymap.domain.model.TrackingPoint
 import com.connor.mymap.domain.model.TrackingSession
 import com.connor.mymap.ui.footprints.FootprintsScreen
@@ -104,6 +107,7 @@ fun ProfileScreen(
     modifier: Modifier = Modifier,
     onSecondaryMapVisibleChange: (Boolean) -> Unit = {},
     onSessionDetailImmersiveChange: (Boolean) -> Unit = {},
+    onNavigateToMap: () -> Unit = {},
     viewModel: ProfileViewModel = viewModel(),
     footprintsViewModel: FootprintsViewModel = viewModel()
 ) {
@@ -172,7 +176,8 @@ fun ProfileScreen(
                         },
                         loadThumbnailFileIfExists = { viewModel.getThumbnailFileIfExists(it) },
                         ensureThumbnailFile = { id, points -> viewModel.ensureThumbnailFile(id, points) },
-                        loadPoints = { viewModel.loadPoints(it) }
+                        loadPoints = { viewModel.loadPoints(it) },
+                        onNavigateToMap = onNavigateToMap
                     )
 
                     ProfileSection.Footprints -> FootprintsScreen(
@@ -295,6 +300,45 @@ private fun ProfileSectionTabs(
     }
 }
 
+// 저장된 기록이 하나도 없을 때: 경로 일러스트 + 짧은 안내 + 지도 탭으로 보내는 CTA.
+// (달력 필터로 특정 날짜/기간만 0개인 경우는 else 분기의 RecordsEmpty로 별개 처리한다.)
+@Composable
+private fun EmptyHistoryView(
+    onNavigateToMap: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier.padding(horizontal = 40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Image(
+            painter = painterResource(R.drawable.ic_empty_route),
+            contentDescription = null,
+            modifier = Modifier.size(width = 200.dp, height = 150.dp)
+        )
+        Spacer(Modifier.height(24.dp))
+        Text(
+            "아직 저장된 기록이 없어요",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "지도에서 기록을 시작하고 종료하면\n이동 경로가 여기에 저장됩니다.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(24.dp))
+        Button(onClick = onNavigateToMap) {
+            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("첫 기록 시작하기")
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SessionListContent(
@@ -309,7 +353,8 @@ private fun SessionListContent(
     onCreateFootprint: (Set<String>) -> Unit,
     loadThumbnailFileIfExists: suspend (String) -> File?,
     ensureThumbnailFile: suspend (String, List<TrackingPoint>) -> File?,
-    loadPoints: suspend (String) -> List<TrackingPoint>
+    loadPoints: suspend (String) -> List<TrackingPoint>,
+    onNavigateToMap: () -> Unit
 ) {
     var pendingDeleteId by remember { mutableStateOf<String?>(null) }
     var isEditMode by remember { mutableStateOf(false) }
@@ -432,13 +477,10 @@ private fun SessionListContent(
                 }
             }
             sessions.isEmpty() -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        text = "아직 저장된 이동 기록이 없습니다.\n홈에서 기록을 시작하고 '종료하고 저장'을 누르면\n여기에 표시됩니다.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                EmptyHistoryView(
+                    onNavigateToMap = onNavigateToMap,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
             else -> {
                 val emptyMessage = when (selectionMode) {

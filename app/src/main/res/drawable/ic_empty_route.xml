@@ -1,0 +1,22 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="200dp" android:height="150dp"
+    android:viewportWidth="200" android:viewportHeight="150">
+    <!-- 배경 원 -->
+    <path android:fillColor="#E8F2F0"
+        android:pathData="M100,5 a70,70 0 1,0 0,140 a70,70 0 1,0 0,-140z"/>
+    <!-- 경로: 흰 테두리 -->
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="12"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M40,115 L70,85 L62,72 L105,80 L100,48 L145,58"/>
+    <!-- 경로: coral 본선 -->
+    <path android:strokeColor="#F26B4E" android:strokeWidth="6.5"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M40,115 L70,85 L62,72 L105,80 L100,48 L145,58"/>
+    <!-- 시작점 -->
+    <path android:fillColor="#FFFFFF" android:pathData="M40,106 a9,9 0 1,0 0,18 a9,9 0 1,0 0,-18z"/>
+    <path android:fillColor="#0F8A7E" android:pathData="M40,109.5 a5.5,5.5 0 1,0 0,11 a5.5,5.5 0 1,0 0,-11z"/>
+    <!-- 도착 핀 -->
+    <path android:fillColor="#F26B4E" android:strokeColor="#FFFFFF" android:strokeWidth="4"
+        android:pathData="M145,30 c-11,0 -19,8 -19,18.5 c0,13 19,30.5 19,30.5 s19,-17.5 19,-30.5 C164,38 156,30 145,30z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M145,42 a6,6 0 1,0 0,12 a6,6 0 1,0 0,-12z"/>
+</vector>
