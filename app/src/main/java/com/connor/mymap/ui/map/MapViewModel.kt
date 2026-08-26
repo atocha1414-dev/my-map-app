@@ -76,18 +76,11 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
     private val _myLocation = MutableStateFlow<UserLocation?>(null)
     val myLocation: StateFlow<UserLocation?> = _myLocation.asStateFlow()
 
-    // 일시정지 상태: 기록이 진행됐으나 사용자가 정지한 경우 true.
-    // GPS 포인트가 하나도 없어도 정지 vs 초기화를 UI에서 구분하기 위해 별도 관리한다.
-    private val _isPaused = MutableStateFlow(false)
-    val isPaused: StateFlow<Boolean> = _isPaused.asStateFlow()
-
-    // 일시정지 시점까지의 경과 시간(ms). GPS 포인트 유무와 무관하게 실제 타이머를 보존한다.
-    private val _pausedDurationMillis = MutableStateFlow(0L)
-    val pausedDurationMillis: StateFlow<Long> = _pausedDurationMillis.asStateFlow()
-
     val isTracking: StateFlow<Boolean> = TrackingState.isTracking
+    val isPaused: StateFlow<Boolean> = TrackingState.isPaused
     val trackPoints: StateFlow<List<TrackingPoint>> = TrackingState.trackPoints
     val trackingStartedAtMillis: StateFlow<Long?> = TrackingState.trackingStartedAtMillis
+    val pausedDurationMillis: StateFlow<Long> = TrackingState.pausedDurationMillis
 
     private var pendingTrackingStart = false
 
@@ -196,7 +189,6 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
         _permissionState.value = LocationPermissionState.Granted
         if (pendingTrackingStart) {
             pendingTrackingStart = false
-            _isPaused.value = false
             TrackingService.start(getApplication())
             // 변경 이유: 기록 시작 버튼은 서비스만 켜고 지도 화면의 현재 위치 상태를 갱신하지 않아
             // 파란 위치 포인터와 카메라 이동이 즉시 보이지 않았다.
@@ -259,32 +251,21 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onStopTrackingClick() {
         pendingTrackingStart = false
-        _isPaused.value = true
-        val startedAt = TrackingState.trackingStartedAtMillis.value
-        val sessionDuration =
-            if (startedAt != null) (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
-            else 0L
-        // 이전 세션 누적 시간 위에 현재 세션을 더해 보존한다.
-        _pausedDurationMillis.value = _pausedDurationMillis.value + sessionDuration
-        TrackingService.stop(getApplication())
+        // 홈 버튼과 알림 버튼이 같은 공용 일시정지 상태/누적 시간을 갱신한다.
+        TrackingState.pauseTracking()
+        TrackingService.pause(getApplication())
     }
 
     /** "종료하고 저장": 실제 동작은 현재 세션을 저장한 뒤 지도의 경로를 초기화한다(동작 변경 없음, 이름만 정정). */
     fun onFinishAndSaveClick() {
         pendingTrackingStart = false
 
-        val startedAt = TrackingState.trackingStartedAtMillis.value
-        val currentSessionDuration =
-            if (TrackingState.isTracking.value && startedAt != null)
-                (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
-            else 0L
-        val totalDurationMillis = _pausedDurationMillis.value + currentSessionDuration
+        val totalDurationMillis = TrackingState.elapsedDurationMillis()
         // 인메모리 포인트는 MAX_LIVE_POINTS로 캡이 걸려 있어 저장 여부 판단에만 사용.
         // 실제 저장은 디스크에서 전체 포인트를 읽어 처리해 장시간 세션에서도 손실이 없다.
         val hasAnyPoints = TrackingState.trackPoints.value.isNotEmpty()
 
-        _isPaused.value = false
-        _pausedDurationMillis.value = 0L
+        TrackingState.resetTracking()
         TrackingService.stop(getApplication())
 
         viewModelScope.launch {
@@ -319,6 +300,7 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onClearTrackClick() {
+        TrackingState.resetTracking()
         viewModelScope.launch {
             trackingStorage.clearPoints()
             trackingStorage.clearSession()

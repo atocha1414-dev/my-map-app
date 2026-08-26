@@ -20,6 +20,14 @@ object TrackingState {
     private val _trackingStartedAtMillis = MutableStateFlow<Long?>(null)
     val trackingStartedAtMillis: StateFlow<Long?> = _trackingStartedAtMillis.asStateFlow()
 
+    // 홈 시트와 ForegroundService 알림이 같은 일시정지/누적 시간을 사용한다.
+    // ViewModel에만 값을 두면 알림의 중지 버튼이 ViewModel을 거치지 않아 두 시간이 달라진다.
+    private val _isPaused = MutableStateFlow(false)
+    val isPaused: StateFlow<Boolean> = _isPaused.asStateFlow()
+
+    private val _pausedDurationMillis = MutableStateFlow(0L)
+    val pausedDurationMillis: StateFlow<Long> = _pausedDurationMillis.asStateFlow()
+
     fun setTracking(isTracking: Boolean) {
         _isTracking.value = isTracking
         if (!isTracking) {
@@ -29,7 +37,39 @@ object TrackingState {
 
     fun startTracking(startedAtMillis: Long = System.currentTimeMillis()) {
         _trackingStartedAtMillis.value = startedAtMillis
+        _isPaused.value = false
         _isTracking.value = true
+    }
+
+    fun pauseTracking(pausedAtMillis: Long = System.currentTimeMillis()) {
+        if (_isTracking.value) {
+            val startedAtMillis = _trackingStartedAtMillis.value
+            if (startedAtMillis != null) {
+                _pausedDurationMillis.value +=
+                    (pausedAtMillis - startedAtMillis).coerceAtLeast(0L)
+            }
+        }
+        _isTracking.value = false
+        _trackingStartedAtMillis.value = null
+        _isPaused.value = true
+    }
+
+    fun elapsedDurationMillis(nowMillis: Long = System.currentTimeMillis()): Long {
+        val activeDurationMillis = if (_isTracking.value) {
+            _trackingStartedAtMillis.value
+                ?.let { startedAt -> (nowMillis - startedAt).coerceAtLeast(0L) }
+                ?: 0L
+        } else {
+            0L
+        }
+        return _pausedDurationMillis.value + activeDurationMillis
+    }
+
+    fun resetTracking() {
+        _isTracking.value = false
+        _trackingStartedAtMillis.value = null
+        _isPaused.value = false
+        _pausedDurationMillis.value = 0L
     }
 
     fun setTrackPoints(points: List<TrackingPoint>) {

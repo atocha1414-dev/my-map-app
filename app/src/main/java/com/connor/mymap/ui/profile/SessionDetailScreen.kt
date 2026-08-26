@@ -36,6 +36,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -54,8 +55,10 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
@@ -64,6 +67,7 @@ import androidx.lifecycle.viewmodel.MutableCreationExtras
 import androidx.lifecycle.viewmodel.compose.viewModel
 import android.app.Application
 import android.content.Intent
+import android.content.res.Configuration
 import android.widget.Toast
 import com.connor.mymap.data.export.ExportState
 import com.connor.mymap.domain.model.TrackingPoint
@@ -122,6 +126,29 @@ fun SessionDetailScreen(
     var localDragProgress by remember { mutableFloatStateOf(0f) }
     var wasPlayingBeforeDrag by remember { mutableStateOf(false) }
     var isImmersive by rememberSaveable { mutableStateOf(false) }
+
+    // Android 15 edge-to-edge에서는 상태바 아이콘이 화면 배경 위에 직접 그려진다.
+    // 상세 헤더가 보일 때는 흰색 아이콘, 헤더가 사라진 몰입 모드에서는 지도에 맞춘
+    // 기본 아이콘 색을 사용하고 화면을 나갈 때 Activity의 기본값으로 복원한다.
+    val activity = LocalActivity.current
+    val decorView = LocalView.current
+    val isDarkMode =
+        decorView.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+    LaunchedEffect(activity, decorView, isImmersive, isDarkMode) {
+        activity?.let {
+            WindowInsetsControllerCompat(it.window, decorView).isAppearanceLightStatusBars =
+                isImmersive && !isDarkMode
+        }
+    }
+    DisposableEffect(activity, decorView, isDarkMode) {
+        onDispose {
+            activity?.let {
+                WindowInsetsControllerCompat(it.window, decorView).isAppearanceLightStatusBars =
+                    !isDarkMode
+            }
+        }
+    }
 
     // 몰입 모드 중 뒤로가기 → 몰입 해제, 일반 상태 → 화면 종료
     BackHandler(enabled = isImmersive) { isImmersive = false }

@@ -6,8 +6,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Map
@@ -56,6 +58,9 @@ fun MainScreen() {
     val shouldHideBottomBar = isImmersive || (selectedTab == MainTab.Profile && isProfileDetailImmersive)
 
     Scaffold(
+        // Android 15+ edge-to-edge에서 화면 가장자리의 시스템 바/컷아웃 영역을 명시적으로 계산한다.
+        // 지도 배경은 끝까지 그리되 아래 컨트롤은 calculateBottomPadding()으로 보호한다.
+        contentWindowInsets = WindowInsets.safeDrawing,
         bottomBar = {
             AnimatedVisibility(
                 visible = !shouldHideBottomBar,
@@ -89,6 +94,7 @@ fun MainScreen() {
             if (keepHomeMapComposed) {
                 MapScreen(
                     isImmersive = isImmersive,
+                    showTrackingSheet = selectedTab == MainTab.Home,
                     onMapTap = { isImmersive = !isImmersive },
                     onNavigateToProfile = { selectedTab = MainTab.Profile },
                     modifier = Modifier

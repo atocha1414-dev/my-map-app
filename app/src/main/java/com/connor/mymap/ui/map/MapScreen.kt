@@ -42,12 +42,16 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.BottomSheetScaffold
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarDuration
@@ -57,6 +61,8 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberBottomSheetScaffoldState
+import androidx.compose.material3.rememberStandardBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -90,10 +96,12 @@ import com.google.android.gms.location.Priority
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MapScreen(
     modifier: Modifier = Modifier,
     isImmersive: Boolean = false,
+    showTrackingSheet: Boolean = true,
     onMapTap: () -> Unit = {},
     onNavigateToProfile: () -> Unit = {},
     viewModel: MapViewModel = viewModel()
@@ -133,6 +141,13 @@ fun MapScreen(
     val scope = rememberCoroutineScope()
     var showSaveConfirm by remember { mutableStateOf(false) }
     var showDiscardConfirm by remember { mutableStateOf(false) }
+    val trackingSheetState = rememberStandardBottomSheetState(
+        initialValue = SheetValue.PartiallyExpanded,
+        skipHiddenState = true
+    )
+    val bottomSheetScaffoldState = rememberBottomSheetScaffoldState(
+        bottomSheetState = trackingSheetState
+    )
 
     // 정책 반영: GPS/위치 서비스 켜기 요청은 약관 동의 직후가 아니라
     // 사용자가 지도 화면에서 "내 위치" 버튼을 누른 뒤에만 실행한다.
@@ -256,7 +271,80 @@ fun MapScreen(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    val displayDurationMillis = when {
+        isTracking -> {
+            val startedAtMillis = trackingStartedAtMillis ?: nowMillis
+            pausedDurationMillis + (nowMillis - startedAtMillis).coerceAtLeast(0L)
+        }
+        isPaused -> pausedDurationMillis
+        else -> trackingStats.durationMillis
+    }
+    val displayAverageSpeed = if (displayDurationMillis > 0L) {
+        trackingStats.distanceMeters / (displayDurationMillis / 1_000f)
+    } else {
+        0f
+    }
+    val hasCurrentRecord = isTracking || isPaused || trackPoints.isNotEmpty()
+    val sheetPeekHeight = 116.dp
+
+    // 기록을 시작하면 통계가 바로 보이도록 펼치고, 기록을 저장/삭제하면 시작 버튼만 보이게 접는다.
+    // 몰입 모드에서는 시트를 0dp까지 내려 지도만 남긴다.
+    LaunchedEffect(
+        isImmersive,
+        showTrackingSheet,
+        isTracking,
+        isPaused,
+        trackPoints.isNotEmpty()
+    ) {
+        when {
+            isImmersive || !showTrackingSheet -> trackingSheetState.partialExpand()
+            isTracking || isPaused -> trackingSheetState.expand()
+            trackPoints.isEmpty() -> trackingSheetState.partialExpand()
+        }
+    }
+
+    BottomSheetScaffold(
+        scaffoldState = bottomSheetScaffoldState,
+        // 홈 지도는 카메라 상태 보존을 위해 다른 탭에서도 컴포지션에 남아 있다.
+        // 이동 기록 탭에서는 시트 높이·내용·드래그를 모두 제거해 목록 위에 나타나지 않게 한다.
+        sheetPeekHeight = if (isImmersive || !showTrackingSheet) 0.dp else sheetPeekHeight,
+        sheetSwipeEnabled = showTrackingSheet && !isImmersive,
+        sheetShape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        sheetContainerColor = MaterialTheme.colorScheme.surface,
+        sheetTonalElevation = 3.dp,
+        sheetShadowElevation = 10.dp,
+        sheetDragHandle = {
+            if (showTrackingSheet && !isImmersive) BottomSheetDefaults.DragHandle()
+        },
+        sheetContent = {
+            if (showTrackingSheet) {
+                TrackingControlSheet(
+                    isTracking = isTracking,
+                    isPaused = isPaused,
+                    hasCurrentRecord = hasCurrentRecord,
+                    distanceMeters = trackingStats.distanceMeters,
+                    durationMillis = displayDurationMillis,
+                    averageSpeedMetersPerSecond = displayAverageSpeed,
+                    latestAccuracyMeters = trackingStats.latestAccuracyMeters,
+                    onPrimaryAction = {
+                        if (isTracking) {
+                            viewModel.onStopTrackingClick()
+                        } else {
+                            viewModel.onStartTrackingClick(
+                                hasForegroundPermission = PermissionHelper.hasLocationPermission(context),
+                                hasBackgroundPermission = PermissionHelper.hasBackgroundLocationPermission(context),
+                                hasNotificationPermission = PermissionHelper.hasNotificationPermission(context)
+                            )
+                        }
+                    },
+                    onFinish = { showSaveConfirm = true },
+                    onDiscard = { showDiscardConfirm = true }
+                )
+            }
+        },
+        modifier = modifier.fillMaxSize()
+    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
 
         // 지도
         MapLibreView(
@@ -267,86 +355,25 @@ fun MapScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // 기록 상태 배지: 몰입 모드에서도 항상 표시 (배지 없음 = 기록 안 함)
-        RecordingStatusBadge(
-            isTracking = isTracking,
-            isPaused = isPaused,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .statusBarsPadding()
-                .padding(start = 16.dp, top = 12.dp)
-        )
-
-        AnimatedVisibility(
-            visible = !isImmersive && (isTracking || isPaused || trackPoints.isNotEmpty()),
-            enter = fadeIn() + slideInVertically { -it },
-            exit = fadeOut() + slideOutVertically { -it },
-            modifier = Modifier.align(Alignment.TopCenter)
-        ) {
-            val displayDurationMillis = when {
-                isTracking -> {
-                    val startedAtMillis = trackingStartedAtMillis ?: nowMillis
-                    // 이전 세션 누적 시간 + 현재 세션 경과 시간
-                    pausedDurationMillis + (nowMillis - startedAtMillis).coerceAtLeast(0L)
-                }
-                isPaused -> pausedDurationMillis
-                else -> trackingStats.durationMillis
-            }
-            val displayAverageSpeed = if (displayDurationMillis > 0L) {
-                trackingStats.distanceMeters / (displayDurationMillis / 1_000f)
-            } else {
-                0f
-            }
-
-            TrackingStatsPanel(
-                distanceMeters = trackingStats.distanceMeters,
-                durationMillis = displayDurationMillis,
-                averageSpeedMetersPerSecond = displayAverageSpeed,
-                latestAccuracyMeters = trackingStats.latestAccuracyMeters,
+        // 몰입 모드에서는 Bottom Sheet가 숨겨지므로 최소한의 기록 상태만 지도 위에 남긴다.
+        if (isImmersive) {
+            RecordingStatusBadge(
                 isTracking = isTracking,
+                isPaused = isPaused,
                 modifier = Modifier
-                    .statusBarsPadding()   // 카메라·상태바 아래부터 배치
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(start = 16.dp, top = 12.dp)
             )
         }
 
+        // 내 위치는 Bottom Sheet에 포함하지 않고 지도 위의 독립된 버튼으로 유지한다.
         AnimatedVisibility(
-            visible = !isImmersive,
+            visible = showTrackingSheet && !isImmersive,
             enter = fadeIn() + slideInVertically { it },
             exit = fadeOut() + slideOutVertically { it },
             modifier = Modifier.align(Alignment.BottomEnd)
         ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            horizontalAlignment = Alignment.End
-        ) {
-            // 종료하고 저장: 기록 중/일시정지/경로 있을 때 노출 (실제 동작은 저장 후 초기화)
-            if (isTracking || isPaused || trackPoints.isNotEmpty()) {
-                ExtendedFloatingActionButton(
-                    onClick = { showSaveConfirm = true },
-                    icon = { Icon(Icons.Default.Check, contentDescription = null) },
-                    text = { Text("종료하고 저장") },
-                    modifier = Modifier.padding(bottom = 12.dp)
-                )
-            }
-
-            // 주 동작(시작/일시정지/재시작): 72dp 원형, 기록 중=코랄
-            PrimaryTrackingButton(
-                isTracking = isTracking,
-                onClick = {
-                    if (isTracking) {
-                        viewModel.onStopTrackingClick()
-                    } else {
-                        viewModel.onStartTrackingClick(
-                            hasForegroundPermission = PermissionHelper.hasLocationPermission(context),
-                            hasBackgroundPermission = PermissionHelper.hasBackgroundLocationPermission(context),
-                            hasNotificationPermission = PermissionHelper.hasNotificationPermission(context)
-                        )
-                    }
-                }
-            )
-
-            // 보조: 내 위치 (48dp). 1회성 현재 위치 확인 + 위치 권한/GPS 설정 진입점.
             SmallFloatingActionButton(
                 onClick = {
                     viewModel.onMyLocationClick(
@@ -355,29 +382,14 @@ fun MapScreen(
                 },
                 containerColor = MaterialTheme.colorScheme.surface,
                 contentColor = MaterialTheme.colorScheme.secondary,
-                modifier = Modifier.padding(top = 12.dp)
+                modifier = Modifier.padding(
+                    end = 16.dp,
+                    bottom = sheetPeekHeight + 16.dp
+                )
             ) {
                 Icon(
                     imageVector = Icons.Default.MyLocation,
                     contentDescription = "내 위치"
-                )
-            }
-        }
-        }
-
-        AnimatedVisibility(
-            visible = !isImmersive && trackPoints.isNotEmpty() && !isTracking,
-            enter = fadeIn() + slideInVertically { it },
-            exit = fadeOut() + slideOutVertically { it },
-            modifier = Modifier.align(Alignment.BottomStart)
-        ) {
-            TextButton(
-                onClick = { showDiscardConfirm = true },
-                modifier = Modifier.padding(16.dp)
-            ) {
-                Text(
-                    text = "저장하지 않고 삭제",
-                    color = MaterialTheme.colorScheme.error
                 )
             }
         }
@@ -456,7 +468,11 @@ fun MapScreen(
             hostState = snackbarHostState,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(16.dp)
+                .padding(
+                    start = 16.dp,
+                    end = 16.dp,
+                    bottom = sheetPeekHeight + 16.dp
+                )
         ) { data ->
             if (data.visuals.actionLabel == "보기") {
                 // 저장 완료 축하 — 그라데이션은 이 축하 순간에만(절제 원칙).
@@ -492,52 +508,194 @@ fun MapScreen(
         }
     }
 }
+}
 
 @Composable
-private fun TrackingStatsPanel(
+private fun TrackingControlSheet(
+    isTracking: Boolean,
+    isPaused: Boolean,
+    hasCurrentRecord: Boolean,
     distanceMeters: Float,
     durationMillis: Long,
     averageSpeedMetersPerSecond: Float,
     latestAccuracyMeters: Float?,
-    isTracking: Boolean,
-    modifier: Modifier = Modifier
+    onPrimaryAction: () -> Unit,
+    onFinish: () -> Unit,
+    onDiscard: () -> Unit
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
-        )
+    val pulse = rememberInfiniteTransition(label = "sheetRecordingPulse")
+    val dotAlpha by pulse.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.35f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "sheetDotAlpha"
+    )
+    val statusTitle = when {
+        isTracking -> "실시간 기록 중"
+        isPaused -> "기록 일시정지"
+        else -> "이동 기록"
+    }
+    val statusMessage = when {
+        isTracking -> "앱을 닫아도 계속 기록합니다"
+        isPaused -> "현재 위치 수집을 잠시 멈췄습니다"
+        else -> "준비되면 시작 버튼을 눌러주세요"
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 20.dp, bottom = 24.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = if (isTracking) "기록 중" else "최근 기록",
-                style = MaterialTheme.typography.labelLarge,
-                color = if (isTracking) RecordingCoral else MaterialTheme.colorScheme.onSurfaceVariant
+        // 접힌 상태에서도 기록 상태와 주 동작이 한눈에 보이는 고정 헤더다.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .background(
+                        color = when {
+                            isTracking -> RecordingCoral.copy(alpha = dotAlpha)
+                            isPaused -> MaterialTheme.colorScheme.outline
+                            else -> MaterialTheme.colorScheme.primary
+                        },
+                        shape = CircleShape
+                    )
             )
-
-            Spacer(Modifier.height(8.dp))
-
-            Text(
-                text = formatDistance(distanceMeters),
-                style = MaterialTheme.typography.headlineSmall
-            )
-
-            Spacer(Modifier.height(4.dp))
-
-            Text(
-                text = "시간 ${formatDuration(durationMillis)} · 평균 ${formatSpeed(averageSpeedMetersPerSecond)}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            latestAccuracyMeters?.let { accuracy ->
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "GPS 정확도 ±${accuracy.toInt()}m",
+                    text = statusTitle,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isTracking) RecordingCoral else MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = statusMessage,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            Button(
+                onClick = onPrimaryAction,
+                shape = RoundedCornerShape(8.dp),
+                colors = if (isTracking) {
+                    ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    ButtonDefaults.buttonColors()
+                }
+            ) {
+                Icon(
+                    imageVector = if (isTracking) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = null
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    when {
+                        isTracking -> "일시정지"
+                        isPaused -> "계속"
+                        else -> "시작"
+                    }
+                )
+            }
         }
+
+        Spacer(Modifier.height(12.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Spacer(Modifier.height(16.dp))
+
+        Row(modifier = Modifier.fillMaxWidth()) {
+            TrackingMetric(
+                label = "거리",
+                value = formatDistance(distanceMeters),
+                modifier = Modifier.weight(1f)
+            )
+            TrackingMetric(
+                label = "시간",
+                value = formatDuration(durationMillis),
+                modifier = Modifier.weight(1f)
+            )
+            TrackingMetric(
+                label = "평균 속도",
+                value = formatSpeed(averageSpeedMetersPerSecond),
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = latestAccuracyMeters?.let { "GPS 정확도 ±${it.toInt()}m" }
+                ?: "GPS 위치를 기다리는 중",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Spacer(Modifier.height(18.dp))
+        if (hasCurrentRecord) {
+            Button(
+                onClick = onFinish,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = RecordingCoral)
+            ) {
+                Icon(Icons.Default.Check, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("종료하고 저장")
+            }
+
+            if (!isTracking) {
+                TextButton(
+                    onClick = onDiscard,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("저장하지 않고 삭제", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        } else {
+            OutlinedButton(
+                onClick = onPrimaryAction,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Icon(Icons.Default.PlayArrow, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("새 이동 기록 시작")
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrackingMetric(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
@@ -546,28 +704,6 @@ private fun formatDistance(distanceMeters: Float): String = Formats.distance(dis
 private fun formatDuration(durationMillis: Long): String = Formats.duration(durationMillis)
 
 private fun formatSpeed(speedMetersPerSecond: Float): String = Formats.speed(speedMetersPerSecond)
-
-/** 주 동작 FAB: 72dp 원형. 기록 중=코랄(일시정지 아이콘), 그 외=primary(시작/재시작). */
-@Composable
-private fun PrimaryTrackingButton(
-    isTracking: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    FloatingActionButton(
-        onClick = onClick,
-        shape = CircleShape,
-        containerColor = if (isTracking) RecordingCoral else MaterialTheme.colorScheme.primary,
-        contentColor = Color.White,
-        modifier = modifier.size(72.dp)
-    ) {
-        Icon(
-            imageVector = if (isTracking) Icons.Default.Pause else Icons.Default.PlayArrow,
-            contentDescription = if (isTracking) "일시정지" else "기록 시작",
-            modifier = Modifier.size(32.dp)
-        )
-    }
-}
 
 /** 좌상단 고정 상태 배지: 기록 중(코랄 점 펄스) / 일시정지(회색 점) / 없으면 미표시. */
 @Composable

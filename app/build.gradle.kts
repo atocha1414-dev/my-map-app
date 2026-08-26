@@ -3,6 +3,7 @@ import java.io.FileInputStream
 
 plugins {
     alias(libs.plugins.android.application)
+    // Android Studio가 지원하는 AGP 8.11 환경에서 Kotlin 소스를 컴파일한다.
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
@@ -25,8 +26,9 @@ android {
         applicationId = "com.yhgps.mymap"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.0.1"
+        // Google Play 업데이트는 이전에 업로드된 값보다 높은 versionCode가 필요하다.
+        versionCode = 8
+        versionName = "1.0.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField(
@@ -62,17 +64,32 @@ android {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
+
+        //
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            resValue("string", "app_name", "MyMap Dev")
+        }
+        //
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-    kotlinOptions {
-        jvmTarget = "11"
-    }
     buildFeatures {
         compose = true
         buildConfig = true
+        // AGP 버전과 관계없이 debug의 MyMap Dev 리소스 값을 사용하도록 명시적으로 켠다.
+        resValues = true
+    }
+}
+
+// AGP 8.x의 외부 Kotlin 플러그인이 실행 JDK(21)를 컴파일 타깃으로 추론하지 않도록
+// Java compileOptions와 동일한 JVM 11 바이트코드를 생성한다.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
     }
 }
 
@@ -115,7 +132,8 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
-    implementation("androidx.navigation:navigation-compose:2.8.5")
+    // 현재 Android 빌드 도구와 호환되는 안정판으로 맞춰 Navigation 검사기 충돌을 방지한다.
+    implementation("androidx.navigation:navigation-compose:2.9.8")
 
     // DataStore — 최초 실행 약관 동의 여부 저장
     implementation("androidx.datastore:datastore-preferences:1.1.1")

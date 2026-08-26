@@ -133,6 +133,7 @@ class TrackingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_PAUSE -> pauseTracking()
             ACTION_STOP -> stopTracking()
             else -> startTracking()
         }
@@ -148,7 +149,11 @@ class TrackingService : Service() {
         fusedClient.removeLocationUpdates(locationCallback)
         isLocationUpdatesRegistered = false
         isStartingTracking = false
-        TrackingState.setTracking(false)
+        // 정상적인 일시정지/종료는 각 액션에서 이미 상태를 반영한다.
+        // OS가 서비스를 직접 종료한 경우에만 실행 중 플래그를 내린다.
+        if (TrackingState.isTracking.value) {
+            TrackingState.setTracking(false)
+        }
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -171,7 +176,7 @@ class TrackingService : Service() {
         startForeground(
             NOTIFICATION_ID,
             buildNotification(
-                tickerText = buildTickerText(0L),
+                tickerText = buildTickerText(TrackingState.elapsedDurationMillis()),
                 statusText = "서비스 시작 중..."
             )
         )
@@ -239,14 +244,25 @@ class TrackingService : Service() {
         }
     }
 
+    private fun pauseTracking() {
+        // 알림의 중지 버튼도 홈 시트와 동일한 공용 타이머를 갱신한다.
+        // 같은 시각에 UI에서도 호출되더라도 pauseTracking()은 중복 누적하지 않는다.
+        TrackingState.pauseTracking()
+        stopLocationCollection()
+    }
+
     private fun stopTracking() {
+        TrackingState.resetTracking()
+        stopLocationCollection()
+    }
+
+    private fun stopLocationCollection() {
         startJob?.cancel()
         notificationTickerJob?.cancel()
         notificationTickerJob = null
         fusedClient.removeLocationUpdates(locationCallback)
         isLocationUpdatesRegistered = false
         isStartingTracking = false
-        TrackingState.setTracking(false)
         serviceScope.launch {
             // 변경 이유: clearSession()을 비동기로 던진 직후 stopSelf()를 호출하면
             // onDestroy()에서 serviceScope가 취소되어 current_session.txt가 남을 수 있다.
@@ -269,12 +285,12 @@ class TrackingService : Service() {
     }
 
     private fun updateForegroundNotification() {
-        val startedAt = trackingStartedAtMillis
-        if (startedAt <= 0L) return
-        val elapsedMillis = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
+        if (trackingStartedAtMillis <= 0L) return
+        // 홈 시트와 동일한 공용 누적 시간을 사용해 일시정지 후 재개해도 표시가 일치한다.
+        val elapsedMillis = TrackingState.elapsedDurationMillis()
         val tickerText = buildTickerText(elapsedMillis)
         val statusText = if (isLocationUpdatesRegistered) {
-            "서비스 실행 중 · [기록 중지] 버튼으로 종료"
+            "서비스 실행 중 · [기록 중지] 버튼으로 일시정지"
         } else {
             "서비스 시작 중..."
         }
@@ -328,13 +344,13 @@ class TrackingService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val stopIntent = Intent(this, TrackingService::class.java).apply {
-            action = ACTION_STOP
+        val pauseIntent = Intent(this, TrackingService::class.java).apply {
+            action = ACTION_PAUSE
         }
-        val stopPendingIntent = PendingIntent.getService(
+        val pausePendingIntent = PendingIntent.getService(
             this,
             1,
-            stopIntent,
+            pauseIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
@@ -345,7 +361,7 @@ class TrackingService : Service() {
             .setContentText(statusText)
             .setContentIntent(openPendingIntent)
             .setOngoing(true)
-            .addAction(R.drawable.ic_notification_tracking, "기록 중지", stopPendingIntent)
+            .addAction(R.drawable.ic_notification_tracking, "기록 중지", pausePendingIntent)
             .build()
     }
 
@@ -380,6 +396,7 @@ class TrackingService : Service() {
         private const val MAX_LOCATION_AGE_MILLIS = 5_000L
         private val TAXI_FRAMES = listOf("🚕·", "🚕··", "🚕···", "🚕··")
 
+        const val ACTION_PAUSE = "com.connor.mymap.action.PAUSE_TRACKING"
         const val ACTION_STOP = "com.connor.mymap.action.STOP_TRACKING"
 
         fun start(context: Context) {
@@ -390,6 +407,13 @@ class TrackingService : Service() {
         fun stop(context: Context) {
             val intent = Intent(context, TrackingService::class.java).apply {
                 action = ACTION_STOP
+            }
+            context.startService(intent)
+        }
+
+        fun pause(context: Context) {
+            val intent = Intent(context, TrackingService::class.java).apply {
+                action = ACTION_PAUSE
             }
             context.startService(intent)
         }

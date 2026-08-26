@@ -65,19 +65,63 @@ object TrackingCalculator {
             return false
         }
 
-        // 변경 이유: FusedLocationProvider가 속도를 제공하고 그 값이 정지에 가까우면
-        // 순간적인 좌표 튐을 한 번 더 보수적으로 걸러 정지 중 포인트 생성을 줄인다.
+        // FusedLocationProvider가 정지에 가까운 속도를 보고한 상태에서 큰 좌표 변화가 생기면
+        // 실제 이동이 아니라 GPS 점프로 본다. 장시간 정지 시 오래된 앵커와 비교하면
+        // 평균 속도가 낮아져 수 km 점프도 과속 필터를 통과할 수 있으므로 별도로 차단한다.
         if (
             candidateSpeedMetersPerSecond != null &&
             candidateSpeedMetersPerSecond < STATIONARY_SPEED_METERS_PER_SECOND &&
-            distanceMeters < significantMovementDistance * STATIONARY_DISTANCE_MULTIPLIER
+            distanceMeters >= MAX_STATIONARY_FIX_JUMP_METERS
         ) {
             return false
         }
 
-        val speedMetersPerSecond = distanceMeters / elapsedSeconds
-        return speedMetersPerSecond <= MAX_ACCEPTED_SPEED_METERS_PER_SECOND
+        return isPlausibleConsecutiveFix(
+            previous = previous,
+            candidate = candidate,
+            candidateSpeedMetersPerSecond = candidateSpeedMetersPerSecond
+        )
     }
+
+    /**
+     * 연속으로 관측된 두 GPS 픽스 사이의 이동이 물리적으로 가능한지 확인한다.
+     * 채택된 앵커가 아니라 최근 원시 픽스 기준으로 호출해야 장시간 정지 후 점프를 잡을 수 있다.
+     */
+    fun isPlausibleConsecutiveFix(
+        previous: TrackingPoint,
+        candidate: TrackingPoint,
+        candidateSpeedMetersPerSecond: Float? = null
+    ): Boolean {
+        val elapsedSeconds = (candidate.timestampMillis - previous.timestampMillis) / 1_000f
+        val distanceMeters = previous.distanceTo(candidate)
+        return isPlausibleFixMetrics(
+            distanceMeters = distanceMeters,
+            elapsedSeconds = elapsedSeconds,
+            candidateSpeedMetersPerSecond = candidateSpeedMetersPerSecond
+        )
+    }
+
+    internal fun isPlausibleFixMetrics(
+        distanceMeters: Float,
+        elapsedSeconds: Float,
+        candidateSpeedMetersPerSecond: Float? = null
+    ): Boolean {
+        if (elapsedSeconds <= 0f) return false
+        if (
+            candidateSpeedMetersPerSecond != null &&
+            candidateSpeedMetersPerSecond < STATIONARY_SPEED_METERS_PER_SECOND &&
+            distanceMeters >= MAX_STATIONARY_FIX_JUMP_METERS
+        ) {
+            return false
+        }
+
+        val impliedSpeedMetersPerSecond = distanceMeters / elapsedSeconds
+        return impliedSpeedMetersPerSecond <= MAX_ACCEPTED_SPEED_METERS_PER_SECOND
+    }
+
+    fun isEffectivelyStationary(candidateSpeedMetersPerSecond: Float?): Boolean =
+        candidateSpeedMetersPerSecond != null &&
+            candidateSpeedMetersPerSecond < EFFECTIVE_STATIONARY_SPEED_METERS_PER_SECOND
 
     fun TrackingPoint.distanceTo(other: TrackingPoint): Float {
         val results = FloatArray(1)
@@ -110,11 +154,14 @@ object TrackingCalculator {
 
     private const val WARMUP_DURATION_MILLIS = 15_000L
     private const val WARMUP_MAX_ACCEPTED_ACCURACY_METERS = 25f
-    private const val MAX_ACCEPTED_ACCURACY_METERS = 50f
+    // 변경 이유: 40~50m 오차의 좌표가 경로를 도로 밖으로 크게 튀게 만들 수 있어
+    // 일반 추적 구간에서도 정확도 반경이 30m 이하인 위치만 저장한다.
+    private const val MAX_ACCEPTED_ACCURACY_METERS = 30f
     private const val MIN_ACCEPTED_DISTANCE_METERS = 8f
     private const val ACCURACY_SIGNIFICANCE_RATIO = 0.75f
     private const val MAX_STATIONARY_DRIFT_DISTANCE_METERS = 20f
     private const val STATIONARY_SPEED_METERS_PER_SECOND = 0.7f // about 2.5 km/h
-    private const val STATIONARY_DISTANCE_MULTIPLIER = 1.5f
+    private const val EFFECTIVE_STATIONARY_SPEED_METERS_PER_SECOND = 0.3f // about 1.1 km/h
+    private const val MAX_STATIONARY_FIX_JUMP_METERS = 50f
     private const val MAX_ACCEPTED_SPEED_METERS_PER_SECOND = 55.6f // about 200 km/h
 }

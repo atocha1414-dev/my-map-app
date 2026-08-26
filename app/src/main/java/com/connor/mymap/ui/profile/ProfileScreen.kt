@@ -1055,7 +1055,10 @@ private fun TrackingThumbnail(
         suspend fun decode(file: File?): ImageBitmap? {
             if (file == null || !file.exists()) return null
             return withContext(Dispatchers.IO) {
-                runCatching { BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap() }
+                runCatching {
+                    decodeSampledThumbnail(file, THUMBNAIL_DECODE_SIZE_PX)
+                        ?.asImageBitmap()
+                }
                     .getOrNull()
             }
         }
@@ -1102,6 +1105,30 @@ private fun TrackingThumbnail(
         }
     }
 }
+
+/**
+ * PNG 원본 크기만 먼저 읽고 카드 표시 크기에 충분한 해상도로 다운샘플링한다.
+ * 썸네일 생성 크기가 향후 커져도 목록 진입 시 원본 비트맵을 모두 메모리에 올리지 않는다.
+ */
+private fun decodeSampledThumbnail(file: File, requestedSizePx: Int) =
+    BitmapFactory.Options().run {
+        inJustDecodeBounds = true
+        BitmapFactory.decodeFile(file.absolutePath, this)
+
+        val halfWidth = outWidth / 2
+        val halfHeight = outHeight / 2
+        var sampleSize = 1
+        while (
+            halfWidth / sampleSize >= requestedSizePx &&
+            halfHeight / sampleSize >= requestedSizePx
+        ) {
+            sampleSize *= 2
+        }
+
+        inJustDecodeBounds = false
+        inSampleSize = sampleSize
+        BitmapFactory.decodeFile(file.absolutePath, this)
+    }
 
 @Composable
 private fun PathOnlyDrawing(points: List<TrackingPoint>) {
@@ -1152,6 +1179,8 @@ private fun PathOnlyDrawing(points: List<TrackingPoint>) {
             }
     }
 }
+
+private const val THUMBNAIL_DECODE_SIZE_PX = 512
 
 private sealed class ThumbnailState {
     data object Loading : ThumbnailState()

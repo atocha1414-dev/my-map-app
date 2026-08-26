@@ -26,6 +26,8 @@ class TrackPointFilter {
     private var moving = false
     private var stillStreak = 0
     private val pending = ArrayList<TrackingPoint>()
+    // 채택 여부와 무관한 최근 정상 정확도 픽스. 장시간 정지 후 GPS 점프의 순간 속도를 계산한다.
+    private var lastObservedPoint: TrackingPoint? = null
 
     /** 세션/세그먼트 시작 시 호출. resumeAnchor가 있으면 그 점을 앵커로 이어간다. */
     @Synchronized
@@ -34,6 +36,7 @@ class TrackPointFilter {
         moving = false
         stillStreak = 0
         pending.clear()
+        lastObservedPoint = null
     }
 
     /**
@@ -46,16 +49,41 @@ class TrackPointFilter {
         elapsedSinceStartMillis: Long,
         candidateSpeedMetersPerSecond: Float?
     ): TrackingPoint? {
+        // 먼저 정확도 기준을 확인한다. 정확도가 낮은 픽스는 최근 관측 기준점으로도 사용하지 않는다.
+        if (!TrackingCalculator.shouldAcceptPoint(
+                previous = null,
+                candidate = candidate,
+                elapsedSinceStartMillis = elapsedSinceStartMillis,
+                candidateSpeedMetersPerSecond = candidateSpeedMetersPerSecond
+            )
+        ) return null
+
+        // 변경 이유: 채택된 앵커만으로 속도를 계산하면 9시간 이상 정지한 뒤 수 km가 튀어도
+        // 전체 시간으로 나눈 속도가 낮아 정상 이동처럼 통과한다. 직전 원시 픽스와 비교해
+        // 순간적인 대규모 좌표 점프를 먼저 제거한다.
+        val previousObservedPoint = lastObservedPoint
+        lastObservedPoint = candidate
+        if (
+            previousObservedPoint != null &&
+            !TrackingCalculator.isPlausibleConsecutiveFix(
+                previous = previousObservedPoint,
+                candidate = candidate,
+                candidateSpeedMetersPerSecond = candidateSpeedMetersPerSecond
+            )
+        ) return null
+
+        // 속도 센서가 사실상 정지를 보고하면 정확도 반경 안의 좌표 흔들림을 이동으로 확정하지 않는다.
+        // 0.3m/s 미만의 매우 느린 움직임은 포인트 확정이 늦어질 수 있지만,
+        // 장시간 정지 측정에서 수 km가 누적되는 것보다 보수적인 동작을 우선한다.
+        if (TrackingCalculator.isEffectivelyStationary(candidateSpeedMetersPerSecond)) {
+            moving = false
+            stillStreak = 0
+            pending.clear()
+            return null
+        }
+
         val a = anchor
             ?: run {
-                // 첫 점: 정확도 sanity만 통과하면 앵커로 삼는다.
-                if (!TrackingCalculator.shouldAcceptPoint(
-                        previous = null,
-                        candidate = candidate,
-                        elapsedSinceStartMillis = elapsedSinceStartMillis,
-                        candidateSpeedMetersPerSecond = candidateSpeedMetersPerSecond
-                    )
-                ) return null
                 anchor = candidate
                 moving = false
                 stillStreak = 0
@@ -100,10 +128,18 @@ class TrackPointFilter {
         pending.add(candidate)
         if (pending.size > PENDING_CAP) pending.removeAt(0)
 
-        val strongMove = d >= moveThreshold * STRONG_MOVE_MULTIPLIER || d >= STRONG_MOVE_ABSOLUTE_METERS
-        val progressing = pending.size >= 2 &&
-            TrackingCalculator.distance(a, pending.last()) >=
-            TrackingCalculator.distance(a, pending.first()) * PROGRESS_RATIO
+        // 큰 거리 하나만으로 이동을 확정하면 정지 중 GPS 점프가 즉시 경로가 된다.
+        // 속도가 실제 이동을 뒷받침할 때만 빠른 확정을 허용하고, 나머지는 연속 진행을 기다린다.
+        val speedConfirmsMovement =
+            candidateSpeedMetersPerSecond != null &&
+                !TrackingCalculator.isEffectivelyStationary(candidateSpeedMetersPerSecond)
+        val strongMove = speedConfirmsMovement &&
+            (d >= moveThreshold * STRONG_MOVE_MULTIPLIER || d >= STRONG_MOVE_ABSOLUTE_METERS)
+        val progressing = pending.size >= CONFIRM_COUNT &&
+            pending.zipWithNext().all { (from, to) ->
+                TrackingCalculator.distance(a, to) >=
+                    TrackingCalculator.distance(a, from) * PROGRESS_RATIO
+            }
         val confirmed = strongMove || (pending.size >= CONFIRM_COUNT && progressing)
 
         if (confirmed) {
@@ -118,7 +154,7 @@ class TrackPointFilter {
 
     companion object {
         /** 정지→이동 확정에 필요한 연속 '멀어짐' 점 수. */
-        private const val CONFIRM_COUNT = 2
+        private const val CONFIRM_COUNT = 3
         /** 이동→정지 전환에 필요한 연속 '앵커 근처' 점 수. */
         private const val STILL_CONFIRM_COUNT = 2
         /** 이 배수 이상 멀면 단발이라도 즉시 이동 확정(빠른 이동 지연 방지). */

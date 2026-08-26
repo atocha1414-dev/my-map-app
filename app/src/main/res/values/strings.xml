@@ -1,3 +1,4 @@
 <resources>
-    <string name="app_name">MyMap</string>
+    <!-- Play 스토어 등록 이름과 설치 후 런처 이름을 통일한다. -->
+    <string name="app_name">내경로</string>
 </resources>

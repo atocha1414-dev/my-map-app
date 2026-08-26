@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-
     <style name="Theme.MyMap" parent="android:Theme.Material.Light.NoActionBar">
-        <!-- API 34 이하에서도 Android 15와 같은 edge-to-edge 배경을 사용한다. -->
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <!-- Android 15가 강제하는 값과 통일해 디스플레이 컷아웃에서도 검은 여백을 만들지 않는다. -->
+        <item name="android:windowLayoutInDisplayCutoutMode">always</item>
     </style>
 </resources>
