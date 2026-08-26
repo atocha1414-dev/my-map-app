@@ -12,6 +12,7 @@ import com.connor.mymap.domain.model.TrackingSession
 import com.connor.mymap.util.Constants
 import com.connor.mymap.util.Logger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -71,6 +72,10 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     }
 
     init {
+        // 경로색 등 렌더 스타일이 바뀐 경우, 캐시된 옛 썸네일을 한 번만 비워 재생성되게 한다.
+        viewModelScope.launch(Dispatchers.IO) {
+            thumbnailStorage.purgeIfStyleChanged(ThumbnailStorage.STYLE_VERSION)
+        }
         refresh()
     }
 

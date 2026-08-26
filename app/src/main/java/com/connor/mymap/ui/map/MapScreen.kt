@@ -69,7 +69,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -94,7 +93,6 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.LocationSettingsRequest
 import com.google.android.gms.location.Priority
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -138,7 +136,19 @@ fun MapScreen(
     }
 
     val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
+
+    // 저장 완료 축하 스낵바 — 거리는 ViewModel이 디스크 전체 포인트로 계산한 실제 저장값을 쓴다.
+    LaunchedEffect(Unit) {
+        viewModel.sessionSaved.collect { savedDistanceMeters ->
+            val result = snackbarHostState.showSnackbar(
+                message = "${Formats.distance(savedDistanceMeters)} 기록이 저장됐어요",
+                actionLabel = "보기",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) onNavigateToProfile()
+        }
+    }
+
     var showSaveConfirm by remember { mutableStateOf(false) }
     var showDiscardConfirm by remember { mutableStateOf(false) }
     val trackingSheetState = rememberStandardBottomSheetState(
@@ -402,17 +412,7 @@ fun MapScreen(
                 confirmButton = {
                     TextButton(onClick = {
                         showSaveConfirm = false
-                        // 초기화 전에 거리 문구를 캡처(onFinishAndSaveClick 이후 trackPoints가 비워짐).
-                        val savedDistanceText = Formats.distance(trackingStats.distanceMeters)
                         viewModel.onFinishAndSaveClick()
-                        scope.launch {
-                            val result = snackbarHostState.showSnackbar(
-                                message = "$savedDistanceText 기록이 저장됐어요",
-                                actionLabel = "보기",
-                                duration = SnackbarDuration.Short
-                            )
-                            if (result == SnackbarResult.ActionPerformed) onNavigateToProfile()
-                        }
                     }) { Text("저장") }
                 },
                 dismissButton = {

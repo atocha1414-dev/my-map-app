@@ -972,12 +972,14 @@ class RouteVideoExporter(private val context: Context) {
     }
 
     // ─── paints ───
+    // 경로색은 지도·목록 썸네일·스토어 그래픽과 통일한 RecordingCoral(#F26B4E).
+    // 재생 헤드(headFill/headHalo)만 파란색을 유지해 "현재 위치"와 "기록된 경로"를 구분한다.
     private val faintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; color = Color.parseColor("#551F6FEB")
+        style = Paint.Style.STROKE; color = Color.parseColor("#55F26B4E")
         strokeWidth = 7f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
     }
     private val brightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; color = Color.parseColor("#1F6FEB")
+        style = Paint.Style.STROKE; color = Color.parseColor("#F26B4E")
         strokeWidth = 12f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
     }
     private val startFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }

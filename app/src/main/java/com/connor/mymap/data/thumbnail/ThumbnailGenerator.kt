@@ -158,6 +158,14 @@ class ThumbnailGenerator(
         val canvas = android.graphics.Canvas(result)
         val density = context.resources.displayMetrics.density
 
+        // 흰 casing을 먼저 깔고 그 위에 코랄 본선을 그린다(지도 LineLayer와 동일한 구성).
+        val casingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor(PATH_CASING_COLOR)
+            strokeWidth = PATH_CASING_WIDTH_DP * density
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor(PATH_COLOR)
             strokeWidth = PATH_WIDTH_DP * density
@@ -179,16 +187,19 @@ class ThumbnailGenerator(
         fun toY(lat: Double) = ((north - lat) / latSpan * h).toFloat()
 
         // 일시정지로 끊긴 segment끼리는 직선으로 잇지 않는다.
-        points.groupBy { it.segmentIndex }.values.forEach { segment ->
-            if (segment.size < 2) return@forEach
-            val path = android.graphics.Path()
-            segment.forEachIndexed { i, p ->
-                val x = toX(p.longitude)
-                val y = toY(p.latitude)
-                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        val paths = points.groupBy { it.segmentIndex }.values.mapNotNull { segment ->
+            if (segment.size < 2) return@mapNotNull null
+            android.graphics.Path().apply {
+                segment.forEachIndexed { i, p ->
+                    val x = toX(p.longitude)
+                    val y = toY(p.latitude)
+                    if (i == 0) moveTo(x, y) else lineTo(x, y)
+                }
             }
-            canvas.drawPath(path, paint)
         }
+        // casing을 전부 먼저 그려야 다른 segment의 본선을 덮지 않는다.
+        paths.forEach { canvas.drawPath(it, casingPaint) }
+        paths.forEach { canvas.drawPath(it, paint) }
 
         return result
     }
@@ -208,8 +219,11 @@ class ThumbnailGenerator(
         private const val THUMBNAIL_SIZE_DP = 200
         private const val PADDING_RATIO = 0.15
         private const val MIN_RANGE_DEG = 0.0005 // ≈ 50m, 단일 지점도 최소 영역 보장
-        private const val PATH_COLOR = "#1976D2"
+        // 지도·스토어 그래픽과 통일한 기록 경로색(RecordingCoral) + 흰 casing.
+        private const val PATH_COLOR = "#F26B4E"
+        private const val PATH_CASING_COLOR = "#FFFFFF"
         private const val PATH_WIDTH_DP = 3f
+        private const val PATH_CASING_WIDTH_DP = 5f
         private const val PNG_QUALITY = 100
     }
 }

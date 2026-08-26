@@ -19,8 +19,11 @@ import com.connor.mymap.util.Logger
 import com.connor.mymap.util.PermissionHelper
 import com.connor.mymap.util.TrackingCalculator
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -75,6 +78,11 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
     // 현재 내 위치
     private val _myLocation = MutableStateFlow<UserLocation?>(null)
     val myLocation: StateFlow<UserLocation?> = _myLocation.asStateFlow()
+
+    // 세션 저장 완료 1회성 이벤트 — 실제로 저장된 거리(m)를 전달한다.
+    // 인메모리 trackPoints는 MAX_LIVE_POINTS로 잘려 있어 저장 완료 문구에 쓸 수 없다.
+    private val _sessionSaved = MutableSharedFlow<Float>(extraBufferCapacity = 1)
+    val sessionSaved: SharedFlow<Float> = _sessionSaved.asSharedFlow()
 
     val isTracking: StateFlow<Boolean> = TrackingState.isTracking
     val isPaused: StateFlow<Boolean> = TrackingState.isPaused
@@ -287,6 +295,8 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     enforceHistoryRetentionPolicy()
                     canClearCurrentTrack = true
+                    // 저장이 끝난 뒤에야 실제 거리를 알 수 있으므로 여기서 알린다.
+                    _sessionSaved.tryEmit(distance)
                 }
             } catch (e: Exception) {
                 Logger.e(TAG, "Failed to save tracking history", e)

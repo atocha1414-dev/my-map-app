@@ -39,6 +39,29 @@ class ThumbnailStorage(context: Context) {
         }
     }
 
+    /**
+     * 썸네일 렌더 스타일(경로색 등)이 바뀌면 이미 캐시된 PNG는 옛 모습 그대로 남는다.
+     * 버전 표식 파일과 값이 다를 때만 전체를 한 번 비워 다음 조회에서 재생성되게 한다.
+     * @return 삭제한 파일 수 (버전이 같으면 0)
+     */
+    fun purgeIfStyleChanged(currentVersion: Int): Int {
+        return runCatching {
+            if (!dir.exists()) dir.mkdirs()
+            val marker = File(dir, STYLE_VERSION_FILE)
+            val stored = marker.takeIf { it.exists() }?.readText()?.trim()?.toIntOrNull()
+            if (stored == currentVersion) return@runCatching 0
+
+            val deleted = dir.listFiles { _, name -> name.endsWith(EXTENSION) }
+                ?.count { it.delete() } ?: 0
+            marker.writeText(currentVersion.toString())
+            if (deleted > 0) Logger.i(TAG, "Thumbnail style changed → purged $deleted cached files")
+            deleted
+        }.getOrElse { e ->
+            Logger.e(TAG, "Failed to purge thumbnails for style change", e)
+            0
+        }
+    }
+
     fun deleteOrphanedExcept(validSessionIds: Set<String>): Int {
         return runCatching {
             if (!dir.exists()) return@runCatching 0
@@ -57,5 +80,9 @@ class ThumbnailStorage(context: Context) {
         private const val TAG = "ThumbnailStorage"
         private const val DIR_NAME = "thumbnails"
         private const val EXTENSION = ".png"
+        private const val STYLE_VERSION_FILE = "style_version"
+
+        /** 썸네일 렌더 스타일 버전. 경로색·굵기 등을 바꾸면 이 값을 올린다. */
+        const val STYLE_VERSION = 2
     }
 }
