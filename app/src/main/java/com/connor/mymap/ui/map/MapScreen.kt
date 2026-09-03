@@ -81,7 +81,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.connor.mymap.ui.common.ErrorView
 import com.connor.mymap.ui.theme.BrandGradient
-import com.connor.mymap.ui.theme.BrandTeal
 import com.connor.mymap.ui.theme.RecordingCoral
 import com.connor.mymap.util.PermissionHelper
 import com.connor.mymap.util.Formats
@@ -498,7 +497,9 @@ fun MapScreen(
                             )
                         }
                         TextButton(onClick = { data.performAction() }) {
-                            Text("보기", color = BrandTeal)
+                            // 그라데이션 청록 끝 위에 BrandTeal을 얹으면 대비 1.43:1로 사실상 보이지 않는다.
+                            // 그라데이션 위 텍스트는 흰색만 쓴다(대비 3.0:1).
+                            Text("보기", color = Color.White, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
