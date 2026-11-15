@@ -27,8 +27,8 @@ android {
         minSdk = 24
         targetSdk = 36
         // Google Play 업데이트는 이전에 업로드된 값보다 높은 versionCode가 필요하다.
-        versionCode = 8
-        versionName = "1.0.7"
+        versionCode = 11
+        versionName = "1.0.10"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField(
