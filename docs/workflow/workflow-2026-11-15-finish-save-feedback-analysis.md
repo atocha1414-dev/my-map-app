@@ -157,3 +157,9 @@
 - 커밋 후보(HEAD + 수정) 검증: `:app:testDebugUnitTest`(16건 통과), `:app:assembleDebug`, `:app:assembleDebugAndroidTest` 성공.
   커밋 후보 APK는 versionCode 8이라 기기(versionCode 10)에 설치하지 않았다 — 커밋본 자체의 실기기 시험은 미수행.
 - 작업 트리 쪽: 시험 파일 수정 후 `TrackingPausedSaveDeviceTest` 실기기 재실행 OK(2건), 지도·기록 해시 설치 전과 동일.
+
+## 후속: 푸시 (2026-11-15)
+
+- 사용자 요청으로 `a6c9856`을 `origin/main`(atocha1414-dev/my-map-app)에 푸시했다(`4127974..a6c9856`). 푸시 전 원격에 새 커밋 없음, 함께 올라간 다른 커밋 없음.
+- 이 일지 파일이 `docs/` 아래라 GitHub Pages 배포 입력에 포함될 수 있다. 일지에는 합성 시험 값만 있고 실제 좌표·키는 없다. 실제 Pages 배포 상태는 확인하지 않았다.
+- 이 "푸시" 항목은 사용자 요청으로 별도 일지 커밋으로 커밋·푸시했다.
