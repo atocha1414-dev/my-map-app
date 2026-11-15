@@ -148,6 +148,16 @@ fun MapScreen(
         }
     }
 
+    // 저장 실패 안내 — 기록은 일시정지 상태로 남아 있어 "종료하고 저장"으로 다시 시도할 수 있다.
+    LaunchedEffect(Unit) {
+        viewModel.sessionSaveFailed.collect {
+            snackbarHostState.showSnackbar(
+                message = "기록을 저장하지 못했어요. 기록은 남아 있으니 다시 저장해 주세요.",
+                duration = SnackbarDuration.Long
+            )
+        }
+    }
+
     var showSaveConfirm by remember { mutableStateOf(false) }
     var showDiscardConfirm by remember { mutableStateOf(false) }
     val trackingSheetState = rememberStandardBottomSheetState(

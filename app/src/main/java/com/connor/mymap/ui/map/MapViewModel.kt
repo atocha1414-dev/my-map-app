@@ -18,6 +18,7 @@ import com.connor.mymap.domain.repository.MapRepository
 import com.connor.mymap.util.Logger
 import com.connor.mymap.util.PermissionHelper
 import com.connor.mymap.util.TrackingCalculator
+import com.connor.mymap.util.TrackingSaveWindow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -83,6 +84,11 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
     // 인메모리 trackPoints는 MAX_LIVE_POINTS로 잘려 있어 저장 완료 문구에 쓸 수 없다.
     private val _sessionSaved = MutableSharedFlow<Float>(extraBufferCapacity = 1)
     val sessionSaved: SharedFlow<Float> = _sessionSaved.asSharedFlow()
+
+    // 세션 저장 실패 1회성 이벤트 — 기록은 일시정지 상태로 남겨 다시 저장할 수 있게 한다.
+    private val _sessionSaveFailed = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val sessionSaveFailed: SharedFlow<Unit> = _sessionSaveFailed.asSharedFlow()
+    private var isSavingSession = false
 
     val isTracking: StateFlow<Boolean> = TrackingState.isTracking
     val isPaused: StateFlow<Boolean> = TrackingState.isPaused
@@ -266,12 +272,15 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
 
     /** "종료하고 저장": 실제 동작은 현재 세션을 저장한 뒤 지도의 경로를 초기화한다(동작 변경 없음, 이름만 정정). */
     fun onFinishAndSaveClick() {
+        if (isSavingSession) return
+        isSavingSession = true
         pendingTrackingStart = false
 
         val totalDurationMillis = TrackingState.elapsedDurationMillis()
-        // 인메모리 포인트는 MAX_LIVE_POINTS로 캡이 걸려 있어 저장 여부 판단에만 사용.
-        // 실제 저장은 디스크에서 전체 포인트를 읽어 처리해 장시간 세션에서도 손실이 없다.
-        val hasAnyPoints = TrackingState.trackPoints.value.isNotEmpty()
+        // 인메모리 포인트는 MAX_LIVE_POINTS로 캡이 걸려 있어 저장 여부 판단과
+        // 아직 디스크에 쓰이지 않은 마지막 포인트 보충에만 사용한다.
+        val livePoints = TrackingState.trackPoints.value
+        val hasAnyPoints = livePoints.isNotEmpty()
 
         TrackingState.resetTracking()
         TrackingService.stop(getApplication())
@@ -283,28 +292,42 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
                     canClearCurrentTrack = false
                     // 디스크에서 전체 포인트 읽기: 인메모리 캡(MAX_LIVE_POINTS)을 우회해
                     // 장시간 트래킹 세션도 모든 포인트가 온전히 저장된다.
-                    val allPoints = trackingStorage.readPoints()
+                    val allPoints = TrackingSaveWindow.mergePendingLivePoints(
+                        diskPoints = trackingStorage.readPoints(),
+                        livePoints = livePoints
+                    )
                     val endedAt = System.currentTimeMillis()
                     val distance = TrackingCalculator.calculateStats(allPoints).distanceMeters
                     historyStorage.save(
-                        startedAtMillis = (endedAt - totalDurationMillis).coerceAtLeast(0L),
+                        // 일시정지 구간이 있어도 앞부분 포인트가 저장 범위 밖으로 버려지지 않게 한다.
+                        startedAtMillis = TrackingSaveWindow.recordStartMillis(
+                            endedAtMillis = endedAt,
+                            activeDurationMillis = totalDurationMillis,
+                            points = allPoints
+                        ),
                         endedAtMillis = endedAt,
                         durationMillis = totalDurationMillis,
                         distanceMeters = distance,
                         points = allPoints
                     )
-                    enforceHistoryRetentionPolicy()
                     canClearCurrentTrack = true
                     // 저장이 끝난 뒤에야 실제 거리를 알 수 있으므로 여기서 알린다.
                     _sessionSaved.tryEmit(distance)
+                    // 보존 정책 정리 실패는 이미 끝난 저장을 실패로 만들지 않는다.
+                    runCatching { enforceHistoryRetentionPolicy() }
+                        .onFailure { e -> Logger.e(TAG, "Failed to enforce retention policy after save", e) }
                 }
             } catch (e: Exception) {
                 Logger.e(TAG, "Failed to save tracking history", e)
+                // 현재 기록 파일은 남아 있다. 시트에 기록을 다시 보여 주어 재시도할 수 있게 한다.
+                TrackingState.restorePaused(totalDurationMillis)
+                _sessionSaveFailed.tryEmit(Unit)
             } finally {
                 if (canClearCurrentTrack) {
                     trackingStorage.clearPoints()
                     TrackingState.clearTrackPoints()
                 }
+                isSavingSession = false
             }
         }
     }

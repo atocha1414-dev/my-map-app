@@ -45,4 +45,16 @@ class TrackingStateTest {
 
         assertEquals(3_000L, TrackingState.pausedDurationMillis.value)
     }
+
+    @Test
+    fun restorePausedAfterResetKeepsRecordRetryable() {
+        TrackingState.startTracking(startedAtMillis = 1_000L)
+        TrackingState.resetTracking()
+
+        TrackingState.restorePaused(elapsedDurationMillis = 7_000L)
+
+        assertFalse(TrackingState.isTracking.value)
+        assertTrue(TrackingState.isPaused.value)
+        assertEquals(7_000L, TrackingState.elapsedDurationMillis(nowMillis = 99_000L))
+    }
 }

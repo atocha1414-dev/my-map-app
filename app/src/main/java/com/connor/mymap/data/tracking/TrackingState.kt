@@ -54,6 +54,14 @@ object TrackingState {
         _isPaused.value = true
     }
 
+    /** 저장 실패 시 기록을 일시정지 상태로 되돌려 다시 저장할 수 있게 한다. */
+    fun restorePaused(elapsedDurationMillis: Long) {
+        _isTracking.value = false
+        _trackingStartedAtMillis.value = null
+        _pausedDurationMillis.value = elapsedDurationMillis.coerceAtLeast(0L)
+        _isPaused.value = true
+    }
+
     fun elapsedDurationMillis(nowMillis: Long = System.currentTimeMillis()): Long {
         val activeDurationMillis = if (_isTracking.value) {
             _trackingStartedAtMillis.value
